@@ -1,0 +1,16 @@
+{
+  "name": "wsclient",
+  "version": "1.0.0",
+  "description": "",
+  "main": "client.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@bitbucket.org/subiz/wsclient.git"
+  },
+  "author": "Hung Nguyen <hungnguyen@vietnambiz.com>",
+  "license": "MIT",
+  "homepage": "https://bitbucket.org/subiz/wsclient#readme"
+}
