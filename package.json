@@ -1,7 +1,6 @@
 {
-  "name": "wsclient",
+  "name": "@subiz/wsclient",
   "version": "1.0.0",
-  "description": "",
   "main": "client.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
@@ -12,5 +11,6 @@
   },
   "author": "Hung Nguyen <hungnguyen@vietnambiz.com>",
   "license": "MIT",
-  "homepage": "https://bitbucket.org/subiz/wsclient#readme"
+  "homepage": "https://bitbucket.org/subiz/wsclient#readme",
+  "description": ""
 }
