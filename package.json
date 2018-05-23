@@ -12,5 +12,8 @@
   "author": "Hung Nguyen <hungnguyen@vietnambiz.com>",
   "license": "MIT",
   "homepage": "https://bitbucket.org/subiz/wsclient#readme",
-  "description": ""
+  "description": "",
+  "dependencies": {
+    "ws": "^5.2.0"
+  }
 }
