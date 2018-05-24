@@ -1,8 +1,10 @@
+const server = require('./test_server.js').server
 const client = require('./client.js');
 
-var host = "ws://192.168.5.254:8088"
+var host = "ws://localhost:8088"
 function testServerDown2(done) {
-	var ws = new client.WS(`${host}/3/${Math.random()}`);
+	var r = Math.random()
+	var ws = new client.WS({pickUrl: done => done(`${host}/3/${r}`)});
 
 	var connid = ""
 	var fistconnect = true
@@ -49,11 +51,11 @@ function testServerDown2(done) {
 	ws.onerror = (a, err) => {
 		errcount++
 	}
-	ws.reconnect()
 }
 
 function testServerDown(done) {
-	var ws = new client.WS(`${host}/2/${Math.random()}`);
+	var r = Math.random()
+	var ws = new client.WS({pickUrl: done => done(`${host}/2/${r}`)});
 
 	var connid = ""
 	var fistconnect = true
@@ -77,7 +79,7 @@ function testServerDown(done) {
 			return
 		}
 		if (mescount == 2) {
-			if (connid != 5) throw "wrong connid"
+			if (connid != 5) throw `wrong connid, got ${connid}`
 			if (connected != 2) throw `wrong connected time, got ${connected}`
 			if (closed != 4) throw `wrong closed time, got ${closed}`
 			if (errcount != 1) throw `wrong err count, got ${errcount}`
@@ -105,23 +107,21 @@ function testServerDown(done) {
 			}
 		}
 	}
-	ws.reconnect()
 }
 
 function testDead(done) {
-	var ws = new client.WS(`${host}/4`, {
+	var ws = new client.WS({
 		maxReconnectAttempts: 1,
+		pickUrl: done => done(`${host}/4`)
 	});
 
 	ws.ondead = () => {
 		done()
 	}
-	ws.reconnect()
 }
 
 function testNormal(done) {
-	var ws = new client.WS(`${host}/1`);
-
+	var ws = new client.WS({pickUrl: done => done(`${host}/1`)});
 	var connid = ""
 	ws.onopen = (a, id) => {
 		connid = id
@@ -146,22 +146,22 @@ function testNormal(done) {
 		}
 		done()
 	}
-	ws.reconnect()
 }
 
 function main() {
-	//startserver()
-	var done = 0
-	function donecheck() {
-		done++
-		if (done == 4) {
-			process.exit(0)
+	server.listen(8088, () => {
+		var done = 0
+		function donecheck() {
+			done++
+			if (done == 4) {
+				process.exit(0)
+			}
 		}
-	}
-	testServerDown(donecheck)
-	testServerDown2(donecheck)
-	testDead(donecheck)
-	testNormal(donecheck)
+		testServerDown(donecheck)
+		testServerDown2(donecheck)
+		testDead(donecheck)
+		testNormal(donecheck)
+	})
 }
 
 main()
