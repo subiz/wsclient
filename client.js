@@ -89,7 +89,8 @@ class WS {
 			this.reconnect()
 			break
 		case "timeout":
-			this.connect(event)
+			this.onerror(event, "cannot connect")
+			this.reconnect()
 			break
 		case "outdated":
 			this.ondead(event)
@@ -148,5 +149,5 @@ class WS {
 	}
 }
 
-var WebSocket = WebSocket || {}
-module.exports = {WS, env: {WebSocket: WebSocket}}
+var env = {WebSocket: {}}
+module.exports = {WS, env}
