@@ -7,19 +7,17 @@ class WS {
 			maxReconnectInterval: 30000,
 			reconnectDecay: 1.5,
 			timeoutInterval: 2000,
-			maxReconnectAttempts: null,
+			maxReconnectAttempts: 20,
 			pickUrl: done => done("")
 		}
 		Object.assign(this, defsettings, options || {})
 		this.dead = false
 		this.msgQ = []
 		this.url = ""
+		this.connection_id = ""
 		this.reconnectAttempts = 0
 		this.sendloop()
-		this.pickUrl(url => {
-			this.url = url
-			this.reconnect()
-		})
+		this.reconnect()
 	}
 
 	halt() {
@@ -65,16 +63,15 @@ class WS {
 				this.onerror(event, mes.error)
 				this.onclose(event)
 				this.connection_id = ""
-				this.pickUrl(url => {
-					this.url = url
-					this.reconnect()
-				})
+				this.reconnect()
 				return
 			}
 			if (mes.offset == 0) { // first message
 				var id = mes && mes.data && mes.data.id || ""
 				if (!id) {
 					this.onerror(event, "server error: invalid message format, missing connection id")
+					this.onclose(event)
+					this.connection_id = ""
 					this.reconnect()
 					return
 				}
@@ -86,10 +83,12 @@ class WS {
 			break
 		case "error":
 			this.onerror(event, event)
+			this.onclose(event)
 			this.reconnect()
 			break
 		case "timeout":
 			this.onerror(event, "cannot connect")
+			this.onclose(event)
 			this.reconnect()
 			break
 		case "outdated":
@@ -109,12 +108,24 @@ class WS {
 	}
 
 	reconnect() {
+		// make sure to kill the last ws
+		if (this.ws) this.ws.close()
+		this.ws = undefined
+
 		if (this.reconnectAttempts > this.maxReconnectAttempts) {
 			this.dispatch("outdated")
 			return
 		}
 		let delay = this.calculateNextBackoff()
-		setTimeout(() => this.connect(this.connection_id), delay)
+		setTimeout(() => {
+			if (this.ws) return
+			if (this.connection_id) this.connect(this.connection_id)
+			else this.pickUrl(url => {
+				if (this.ws) return
+				this.url = url
+				this.connect("")
+			})
+		}, delay)
 		this.reconnectAttempts++
 	}
 
@@ -124,9 +135,7 @@ class WS {
 	}
 
 	connect(id) {
-		if (this.dead) return
-		if (this.ws) this.ws.close()
-
+		if (this.ws || this.dead) return
 		let url = id ? `${this.url}?connection_id=${id}` : this.url
 		var ws = this.ws = new env.WebSocket(url)
 
