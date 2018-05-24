@@ -1,5 +1,3 @@
-var WebSocket = WebSocket || require('ws')
-
 class WS {
 	constructor(options) {
 		this.onerror = this.onopen = this.onclose = this.ondead = () => {}
@@ -39,7 +37,7 @@ class WS {
 				clearInterval(handler)
 				return
 			}
-			if (!this.ws || this.ws.readyState != WebSocket.OPEN) return
+			if (!this.ws || this.ws.readyState != env.WebSocket.OPEN) return
 			if (this.msgQ.length == 0) return
 			var max = this.msgQ.reduce((a, b) => a > b ? a : b)
 			if (!max) return
@@ -129,7 +127,7 @@ class WS {
 		if (this.ws) this.ws.close()
 
 		let url = id ? `${this.url}?connection_id=${id}` : this.url
-		var ws = this.ws = new WebSocket(url)
+		var ws = this.ws = new env.WebSocket(url)
 
 		let timedOut = false
 		var timeout = setTimeout(() => {
@@ -150,4 +148,8 @@ class WS {
 	}
 }
 
-exports.WS = WS
+var WebSocket = WebSocket || {}
+var env = {
+	WebSocket: WebSocket,
+}
+module.exports = {WS, env}

@@ -1,6 +1,8 @@
-const server = require('./test_server.js').server
-const client = require('./client.js');
+var WebSocket = require('ws')
+var client = require('./client.js')
+client.env.WebSocket = WebSocket
 
+const server = require('./test_server.js').server
 var host = "ws://localhost:8088"
 function testServerDown2(done) {
 	var r = Math.random()
