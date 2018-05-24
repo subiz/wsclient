@@ -1,32 +1,33 @@
-let WebSocket = require('ws');
+let WebSocket = WebSocket || require('ws')
 
 class WS {
-	constructor(url, options) {
+	constructor(options) {
 		this.onerror = this.onopen = this.onclose = this.ondead = () => {}
 		var defsettings = {
-      debug: false,
-      reconnectInterval: 1000,
-      maxReconnectInterval: 30000,
-      reconnectDecay: 1.5,
-      timeoutInterval: 2000,
-      maxReconnectAttempts: null,
+			debug: false,
+			reconnectInterval: 1000,
+			maxReconnectInterval: 30000,
+			reconnectDecay: 1.5,
+			timeoutInterval: 2000,
+			maxReconnectAttempts: null,
 			dead: false,
 			msgQ: [],
-			url,
-    }
+			pickUrl: done => done("")
+		}
 		Object.assign(this, defsettings, options || {})
-
+		this.url = ""
 		this.reconnectAttempts = 0
 		this.sendloop()
-		this.reconnect()
+		this.picUrl(url => {
+			this.url = url
+			this.reconnect()
+		})
 	}
 
-  halt() {
+	halt() {
 		this.dead = true
-    if (this.ws) {
-      this.ws.close()
-    }
-  }
+		if (this.ws) this.ws.close()
+	}
 
 	debugInfo(...msg) {
 		if (this.debug || WS.debugAll) console.debug('WS', this.url, ...msg)
@@ -39,12 +40,13 @@ class WS {
 				return
 			}
 			if (!this.ws || this.ws.readyState != WebSocket.OPEN) return
-			for (let msg of this.msgQ) {
-				this.debugInfo("send", msg)
-				this.ws.send(msg)
-			}
-			this.msgQ = []
-		}, 1000);
+			if (this.msgQ.length == 0) return
+			var max = this.msgQ.reduce((a, b) => a > b ? a : b)
+			if (!max) return
+			this.debugInfo("send", max)
+			this.ws.send(max)
+			this.msgQ.length = 0
+		}, 1000)
 	}
 
 	send(data) {
@@ -55,7 +57,7 @@ class WS {
 		this.debugInfo({eventType, event})
 		switch (eventType) {
 		case "open":
-			this.reconnectAttempts=0
+			this.reconnectAttempts = 0
 			break
 		case "close":
 			this.onclose(event)
@@ -67,7 +69,10 @@ class WS {
 				this.onerror(event, mes.error)
 				this.onclose(event)
 				this.connection_id = ""
-				this.reconnect()
+				this.pickUrl(url => {
+					this.url = url
+					this.reconnect()
+				})
 				return
 			}
 			if (mes.offset && mes.offset == 0) { // first message
@@ -93,6 +98,7 @@ class WS {
 		case "outdated":
 			this.ondead(event)
 			this.halt()
+			break
 		}
 	}
 
@@ -111,7 +117,7 @@ class WS {
 			return
 		}
 		let delay = this.calculateNextBackoff()
-    setTimeout(() => this.connect(this.connection_id), delay)
+		setTimeout(() => this.connect(this.connection_id), delay)
 		this.reconnectAttempts++
 	}
 
@@ -125,22 +131,22 @@ class WS {
 		if (this.ws) this.ws.close()
 
 		let url = id ? `${this.url}?connection_id=${id}` : this.url
-    var ws = this.ws = new WebSocket(url)
+		var ws = this.ws = new WebSocket(url)
 
 		let timedOut = false
-    var timeout = setTimeout(() => {
-      timedOut = true
-      ws.close()
+		var timeout = setTimeout(() => {
+			timedOut = true
+			ws.close()
 			this.dispatch("timeout", id)
-    }, this.timeoutInterval)
+		}, this.timeoutInterval)
 
 		let dispatch = (type, event) => {
 			clearTimeout(timeout)
 			if (!timedOut && ws === this.ws) this.dispatch(type, event)
 		}
 
-    ws.onopen = ev => dispatch('open', ev)
-    ws.onclose = ev => dispatch('close', ev)
+		ws.onopen = ev => dispatch('open', ev)
+		ws.onclose = ev => dispatch('close', ev)
 		ws.onerror = ev => dispatch('error', ev)
 		ws.onmessage = ev => dispatch('message', ev)
 	}
