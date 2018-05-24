@@ -1,4 +1,4 @@
-let WebSocket = WebSocket || require('ws')
+var WebSocket = WebSocket || require('ws')
 
 class WS {
 	constructor(options) {
@@ -18,7 +18,7 @@ class WS {
 		this.url = ""
 		this.reconnectAttempts = 0
 		this.sendloop()
-		this.picUrl(url => {
+		this.pickUrl(url => {
 			this.url = url
 			this.reconnect()
 		})
@@ -75,7 +75,7 @@ class WS {
 				})
 				return
 			}
-			if (mes.offset && mes.offset == 0) { // first message
+			if (mes.offset == 0) { // first message
 				var id = mes && mes.data && mes.data.id || ""
 				if (id === "") {
 					this.onerror(event, "server error: invalid message format, missing connection id")
