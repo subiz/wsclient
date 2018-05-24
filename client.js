@@ -10,11 +10,11 @@ class WS {
 			reconnectDecay: 1.5,
 			timeoutInterval: 2000,
 			maxReconnectAttempts: null,
-			dead: false,
-			msgQ: [],
 			pickUrl: done => done("")
 		}
 		Object.assign(this, defsettings, options || {})
+		this.dead = false
+		this.msgQ = []
 		this.url = ""
 		this.reconnectAttempts = 0
 		this.sendloop()
@@ -49,9 +49,7 @@ class WS {
 		}, 1000)
 	}
 
-	send(data) {
-		this.msgQ.push(data)
-	}
+	commit(offset) { this.msgQ.push(offset) }
 
 	dispatch(eventType, event) {
 		this.debugInfo({eventType, event})
@@ -77,7 +75,7 @@ class WS {
 			}
 			if (mes.offset == 0) { // first message
 				var id = mes && mes.data && mes.data.id || ""
-				if (id === "") {
+				if (!id) {
 					this.onerror(event, "server error: invalid message format, missing connection id")
 					this.reconnect()
 					return
@@ -86,7 +84,7 @@ class WS {
 				this.onopen(event, this.connection_id)
 				return
 			}
-			this.onmessage(event, mes.data)
+			this.onmessage(event, mes.data, mes.offset)
 			break
 		case "error":
 			this.onerror(event, event)
