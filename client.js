@@ -149,7 +149,4 @@ class WS {
 }
 
 var WebSocket = WebSocket || {}
-var env = {
-	WebSocket: WebSocket,
-}
-module.exports = {WS, env}
+module.exports = {WS, env: {WebSocket: WebSocket}}
