@@ -8,13 +8,13 @@ class WS {
 			reconnectDecay: 1.5,
 			timeoutInterval: 2000,
 			maxReconnectAttempts: 20,
-			pickUrl: done => done("")
+			pickUrl: done => done('')
 		}
 		Object.assign(this, defsettings, options || {})
 		this.dead = false
 		this.msgQ = []
-		this.url = ""
-		this.connection_id = ""
+		this.url = ''
+		this.connection_id = ''
 		this.reconnectAttempts = 0
 		this.sendloop()
 		this.reconnect()
@@ -39,7 +39,7 @@ class WS {
 			if (this.msgQ.length == 0) return
 			var max = this.msgQ.reduce((a, b) => a > b ? a : b)
 			if (!max) return
-			this.debugInfo("send", max)
+			this.debugInfo('send', max)
 			this.ws.send(max)
 			this.msgQ.length = 0
 		}, 1000)
@@ -50,28 +50,36 @@ class WS {
 	dispatch(eventType, event) {
 		this.debugInfo({eventType, event})
 		switch (eventType) {
-		case "open":
+		case 'open':
 			this.reconnectAttempts = 0
 			break
-		case "close":
+		case 'close':
 			this.onclose(event)
 			this.reconnect()
 			break
-		case "message":
+		case 'message':
 			let mes = this.parseMessage(event.data)
-			if (mes.error) {
+			if (!mes) {
+				this.onerror(event, 'server error: invalid JSON')
+				this.onclose(event)
+				this.connection_id = ''
+				this.reconnect()
+				return
+			}
+
+			if(mes.error) {
 				this.onerror(event, mes.error)
 				this.onclose(event)
-				this.connection_id = ""
+				this.connection_id = ''
 				this.reconnect()
 				return
 			}
 			if (mes.offset == 0) { // first message
-				var id = mes && mes.data && mes.data.id || ""
+				var id = mes && mes.data && mes.data.id || ''
 				if (!id) {
-					this.onerror(event, "server error: invalid message format, missing connection id")
+					this.onerror(event, 'server error: invalid message format, missing connection id')
 					this.onclose(event)
-					this.connection_id = ""
+					this.connection_id = ''
 					this.reconnect()
 					return
 				}
@@ -81,17 +89,17 @@ class WS {
 			}
 			this.onmessage(event, mes.data, mes.offset)
 			break
-		case "error":
+		case 'error':
 			this.onerror(event, event)
 			this.onclose(event)
 			this.reconnect()
 			break
-		case "timeout":
-			this.onerror(event, "cannot connect")
+		case 'timeout':
+			this.onerror(event, 'cannot connect')
 			this.onclose(event)
 			this.reconnect()
 			break
-		case "outdated":
+		case 'outdated':
 			this.ondead(event)
 			this.halt()
 			break
@@ -99,10 +107,10 @@ class WS {
 	}
 
 	parseMessage(data) {
-		let message = {}
+		let message
 		try {
 			message = JSON.parse(data)
-			message.data = JSON.parse(message.data) || {}
+			message.data = JSON.parse(message.data) || undefined
 		} catch(e) {}
 		return message
 	}
@@ -113,7 +121,7 @@ class WS {
 		this.ws = undefined
 
 		if (this.reconnectAttempts > this.maxReconnectAttempts) {
-			this.dispatch("outdated")
+			this.dispatch('outdated')
 			return
 		}
 		let delay = this.calculateNextBackoff()
@@ -123,7 +131,7 @@ class WS {
 			else this.pickUrl(url => {
 				if (this.ws) return
 				this.url = url
-				this.connect("")
+				this.connect('')
 			})
 		}, delay)
 		this.reconnectAttempts++
@@ -143,7 +151,7 @@ class WS {
 		var timeout = setTimeout(() => {
 			timedOut = true
 			ws.close()
-			this.dispatch("timeout", id)
+			this.dispatch('timeout', id)
 		}, this.timeoutInterval)
 
 		let dispatch = (type, event) => {
