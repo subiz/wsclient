@@ -110,7 +110,7 @@ class WS {
 		let message
 		try {
 			message = JSON.parse(data)
-			message.data = JSON.parse(message.data) || undefined
+			message.data = JSON.parse(message.data)
 		} catch(e) {}
 		return message
 	}
@@ -126,10 +126,10 @@ class WS {
 		}
 		let delay = this.calculateNextBackoff()
 		setTimeout(() => {
-			if (this.ws) return
+			if (this.ws) throw "should not hapend, library miss-used"
 			if (this.connection_id) this.connect(this.connection_id)
 			else this.pickUrl(url => {
-				if (this.ws) return
+				if (this.ws) throw "should not happed, libaray missused"
 				this.url = url
 				this.connect('')
 			})
@@ -145,18 +145,16 @@ class WS {
 	connect(id) {
 		if (this.ws || this.dead) return
 		let url = id ? `${this.url}?connection_id=${id}` : this.url
-		var ws = this.ws = new env.WebSocket(url)
+		let ws = this.ws = new env.WebSocket(url)
 
-		let timedOut = false
-		var timeout = setTimeout(() => {
-			timedOut = true
-			ws.close()
+		let timeout = setTimeout(() => {
+			ws = undefined
 			this.dispatch('timeout', id)
 		}, this.timeoutInterval)
 
 		let dispatch = (type, event) => {
 			clearTimeout(timeout)
-			if (!timedOut && ws === this.ws) this.dispatch(type, event)
+			if (ws && ws === this.ws) this.dispatch(type, event)
 		}
 
 		ws.onopen = ev => dispatch('open', ev)
