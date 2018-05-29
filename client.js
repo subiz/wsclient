@@ -6,7 +6,7 @@ class WS {
 			reconnectInterval: 1000,
 			maxReconnectInterval: 30000,
 			reconnectDecay: 1.5,
-			timeoutInterval: 2000,
+			timeoutInterval: 10000,
 			maxReconnectAttempts: 20,
 			pickUrl: done => done('')
 		}
