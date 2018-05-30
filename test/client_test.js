@@ -1,5 +1,5 @@
 var WebSocket = require('ws')
-var client = require('./client.js')
+var client = require('../src/client.js')
 client.env.WebSocket = WebSocket
 
 const server = require('./test_server.js').server
@@ -156,6 +156,7 @@ function main() {
 		function donecheck() {
 			done++
 			if (done == 4) {
+				console.log('PASS')
 				process.exit(0)
 			}
 		}
