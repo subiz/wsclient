@@ -16,15 +16,14 @@ var WS = function () {
 			maxReconnectInterval: 30000,
 			reconnectDecay: 1.5,
 			timeoutInterval: 10000,
-			maxReconnectAttempts: 20,
+			// maxReconnectAttempts: 20,
 			commitInterval: 2000,
 			pickUrl: function pickUrl(done) {
 				return done('');
 			}
 		};
 		Object.assign(this, defsettings, options || {});
-		this.onerror = this.onopen = this.onclose = this.ondead = function () {};
-		this.dead = false;
+		this.onerror = this.onopen = this.onclose = function () {};
 		this.msgQ = [];
 		this.url = '';
 		this.connection_id = '';
@@ -34,12 +33,6 @@ var WS = function () {
 	}
 
 	_createClass(WS, [{
-		key: 'halt',
-		value: function halt() {
-			this.dead = true;
-			if (this.ws) this.ws.close();
-		}
-	}, {
 		key: 'debugInfo',
 		value: function debugInfo() {
 			var _console;
@@ -56,11 +49,6 @@ var WS = function () {
 			var _this = this;
 
 			var handler = setInterval(function () {
-				if (_this.dead) {
-					clearInterval(handler);
-					return;
-				}
-
 				if (!_this.ws || _this.ws.readyState != env.WebSocket.OPEN) return;
 				if (_this.msgQ.length == 0) return;
 				var max = Math.max.apply(Math, _toConsumableArray(_this.msgQ));
@@ -117,10 +105,6 @@ var WS = function () {
 					this.onclose(event);
 					this.reconnect();
 					return;
-				case 'outdated':
-					this.ondead(event);
-					this.halt();
-					return;
 			}
 		}
 	}, {
@@ -142,10 +126,6 @@ var WS = function () {
 			if (this.ws) this.ws.close();
 			this.ws = undefined;
 
-			if (this.reconnectAttempts > this.maxReconnectAttempts) {
-				this.dispatch('outdated');
-				return;
-			}
 			var delay = this.calculateNextBackoff();
 			setTimeout(function () {
 				if (_this2.ws) throw "should not hapend, library miss-used";
@@ -169,7 +149,7 @@ var WS = function () {
 		value: function connect(id) {
 			var _this3 = this;
 
-			if (this.ws || this.dead) return;
+			if (this.ws) return;
 			var url = id ? this.url + '?connection_id=' + id : this.url;
 			var ws = this.ws = new env.WebSocket(url);
 

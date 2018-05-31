@@ -6,13 +6,12 @@ class WS {
 			maxReconnectInterval: 30000,
 			reconnectDecay: 1.5,
 			timeoutInterval: 10000,
-			maxReconnectAttempts: 20,
+			// maxReconnectAttempts: 20,
 			commitInterval: 2000,
 			pickUrl: done => done('')
 		}
 		Object.assign(this, defsettings, options || {})
-		this.onerror = this.onopen = this.onclose = this.ondead = () => {}
-		this.dead = false
+		this.onerror = this.onopen = this.onclose = () => {}
 		this.msgQ = []
 		this.url = ''
 		this.connection_id = ''
@@ -21,22 +20,12 @@ class WS {
 		this.reconnect()
 	}
 
-	halt() {
-		this.dead = true
-		if (this.ws) this.ws.close()
-	}
-
 	debugInfo(...msg) {
 		if (this.debug || WS.debugAll) console.debug('WS', this.url, ...msg)
 	}
 
 	sendloop() {
 		let handler = setInterval(() => {
-			if (this.dead) {
-				clearInterval(handler)
-				return
-			}
-
 			if (!this.ws || this.ws.readyState != env.WebSocket.OPEN) return
 			if (this.msgQ.length == 0) return
 			let max = Math.max(...this.msgQ)
@@ -89,10 +78,6 @@ class WS {
 			this.onclose(event)
 			this.reconnect()
 			return
-		case 'outdated':
-			this.ondead(event)
-			this.halt()
-			return
 		}
 	}
 
@@ -110,10 +95,6 @@ class WS {
 		if (this.ws) this.ws.close()
 		this.ws = undefined
 
-		if (this.reconnectAttempts > this.maxReconnectAttempts) {
-			this.dispatch('outdated')
-			return
-		}
 		let delay = this.calculateNextBackoff()
 		setTimeout(() => {
 			if (this.ws) throw "should not hapend, library miss-used"
@@ -134,7 +115,7 @@ class WS {
 	}
 
 	connect(id) {
-		if (this.ws || this.dead) return
+		if (this.ws) return
 		let url = id ? `${this.url}?connection_id=${id}` : this.url
 		let ws = this.ws = new env.WebSocket(url)
 
