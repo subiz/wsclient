@@ -1,21 +1,22 @@
 class WS {
 	constructor(options) {
-		this.onerror = this.onopen = this.onclose = this.ondead = () => {}
-		var defsettings = {
+		let defsettings = {
 			debug: false,
 			reconnectInterval: 1000,
 			maxReconnectInterval: 30000,
 			reconnectDecay: 1.5,
 			timeoutInterval: 10000,
 			maxReconnectAttempts: 20,
+			commitInterval: 2000,
 			pickUrl: done => done('')
 		}
 		Object.assign(this, defsettings, options || {})
+		this.onerror = this.onopen = this.onclose = this.ondead = () => {}
 		this.dead = false
 		this.msgQ = []
 		this.url = ''
 		this.connection_id = ''
-		this.reconnectAttempts = 0
+		this.reconnectAttempts = -1
 		this.sendloop()
 		this.reconnect()
 	}
@@ -35,14 +36,14 @@ class WS {
 				clearInterval(handler)
 				return
 			}
+
 			if (!this.ws || this.ws.readyState != env.WebSocket.OPEN) return
 			if (this.msgQ.length == 0) return
-			var max = this.msgQ.reduce((a, b) => a > b ? a : b)
-			if (!max) return
+			let max = Math.max(...this.msgQ)
 			this.debugInfo('send', max)
 			this.ws.send(max)
 			this.msgQ.length = 0
-		}, 1000)
+		}, this.commitInterval)
 	}
 
 	commit(offset) { this.msgQ.push(offset) }
@@ -51,58 +52,47 @@ class WS {
 		this.debugInfo({eventType, event})
 		switch (eventType) {
 		case 'open':
-			this.reconnectAttempts = 0
-			break
+			this.reconnectAttempts = -1
+			return
 		case 'close':
 			this.onclose(event)
 			this.reconnect()
-			break
+			return
 		case 'message':
 			let mes = this.parseMessage(event.data)
-			if (!mes) {
-				this.onerror(event, 'server error: invalid JSON')
+			if (!mes || mes.error) {
+				this.onerror(event, mes.error || 'server error: invalid JSON')
 				this.onclose(event)
 				this.connection_id = ''
 				this.reconnect()
 				return
 			}
 
-			if(mes.error) {
-				this.onerror(event, mes.error)
+			if (mes.offset != 0) {
+				this.onmessage(event, mes.data, mes.offset)
+				return
+			}
+			// first message
+			let id = mes && mes.data && mes.data.id || ''
+			if (!id) {
+				this.onerror(event, 'server error: invalid message format, missing connection id')
 				this.onclose(event)
 				this.connection_id = ''
 				this.reconnect()
 				return
 			}
-			if (mes.offset == 0) { // first message
-				var id = mes && mes.data && mes.data.id || ''
-				if (!id) {
-					this.onerror(event, 'server error: invalid message format, missing connection id')
-					this.onclose(event)
-					this.connection_id = ''
-					this.reconnect()
-					return
-				}
-				this.connection_id = id
-				this.onopen(event, this.connection_id)
-				return
-			}
-			this.onmessage(event, mes.data, mes.offset)
-			break
+			this.connection_id = id
+			this.onopen(event, this.connection_id)
+			return
 		case 'error':
 			this.onerror(event, event)
 			this.onclose(event)
 			this.reconnect()
-			break
-		case 'timeout':
-			this.onerror(event, 'cannot connect')
-			this.onclose(event)
-			this.reconnect()
-			break
+			return
 		case 'outdated':
 			this.ondead(event)
 			this.halt()
-			break
+			return
 		}
 	}
 
@@ -138,8 +128,9 @@ class WS {
 	}
 
 	calculateNextBackoff() {
+		if (this.reconnectAttempts == -1) return 0 // first time connect
 		let delaytime = this.reconnectInterval * Math.pow(this.reconnectDecay, this.reconnectAttempts)
-		return delaytime > this.maxReconnectInterval ? this.maxReconnectInterval : delaytime
+		return Math.min(this.maxReconnectInterval, delaytime)
 	}
 
 	connect(id) {
@@ -149,7 +140,7 @@ class WS {
 
 		let timeout = setTimeout(() => {
 			ws = undefined
-			this.dispatch('timeout', id)
+			this.dispatch('error', 'timeout')
 		}, this.timeoutInterval)
 
 		let dispatch = (type, event) => {

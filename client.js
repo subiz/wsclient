@@ -2,13 +2,14 @@
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
 
+function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr2 = Array(arr.length); i < arr.length; i++) { arr2[i] = arr[i]; } return arr2; } else { return Array.from(arr); } }
+
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 var WS = function () {
 	function WS(options) {
 		_classCallCheck(this, WS);
 
-		this.onerror = this.onopen = this.onclose = this.ondead = function () {};
 		var defsettings = {
 			debug: false,
 			reconnectInterval: 1000,
@@ -16,16 +17,18 @@ var WS = function () {
 			reconnectDecay: 1.5,
 			timeoutInterval: 10000,
 			maxReconnectAttempts: 20,
+			commitInterval: 2000,
 			pickUrl: function pickUrl(done) {
 				return done('');
 			}
 		};
 		Object.assign(this, defsettings, options || {});
+		this.onerror = this.onopen = this.onclose = this.ondead = function () {};
 		this.dead = false;
 		this.msgQ = [];
 		this.url = '';
 		this.connection_id = '';
-		this.reconnectAttempts = 0;
+		this.reconnectAttempts = -1;
 		this.sendloop();
 		this.reconnect();
 	}
@@ -57,16 +60,14 @@ var WS = function () {
 					clearInterval(handler);
 					return;
 				}
+
 				if (!_this.ws || _this.ws.readyState != env.WebSocket.OPEN) return;
 				if (_this.msgQ.length == 0) return;
-				var max = _this.msgQ.reduce(function (a, b) {
-					return a > b ? a : b;
-				});
-				if (!max) return;
+				var max = Math.max.apply(Math, _toConsumableArray(_this.msgQ));
 				_this.debugInfo('send', max);
 				_this.ws.send(max);
 				_this.msgQ.length = 0;
-			}, 1000);
+			}, this.commitInterval);
 		}
 	}, {
 		key: 'commit',
@@ -79,59 +80,47 @@ var WS = function () {
 			this.debugInfo({ eventType: eventType, event: event });
 			switch (eventType) {
 				case 'open':
-					this.reconnectAttempts = 0;
-					break;
+					this.reconnectAttempts = -1;
+					return;
 				case 'close':
 					this.onclose(event);
 					this.reconnect();
-					break;
+					return;
 				case 'message':
 					var mes = this.parseMessage(event.data);
-					if (!mes) {
-						this.onerror(event, 'server error: invalid JSON');
+					if (!mes || mes.error) {
+						this.onerror(event, mes.error || 'server error: invalid JSON');
 						this.onclose(event);
 						this.connection_id = '';
 						this.reconnect();
 						return;
 					}
 
-					if (mes.error) {
-						this.onerror(event, mes.error);
+					if (mes.offset != 0) {
+						this.onmessage(event, mes.data, mes.offset);
+						return;
+					}
+					// first message
+					var id = mes && mes.data && mes.data.id || '';
+					if (!id) {
+						this.onerror(event, 'server error: invalid message format, missing connection id');
 						this.onclose(event);
 						this.connection_id = '';
 						this.reconnect();
 						return;
 					}
-					if (mes.offset == 0) {
-						// first message
-						var id = mes && mes.data && mes.data.id || '';
-						if (!id) {
-							this.onerror(event, 'server error: invalid message format, missing connection id');
-							this.onclose(event);
-							this.connection_id = '';
-							this.reconnect();
-							return;
-						}
-						this.connection_id = id;
-						this.onopen(event, this.connection_id);
-						return;
-					}
-					this.onmessage(event, mes.data, mes.offset);
-					break;
+					this.connection_id = id;
+					this.onopen(event, this.connection_id);
+					return;
 				case 'error':
 					this.onerror(event, event);
 					this.onclose(event);
 					this.reconnect();
-					break;
-				case 'timeout':
-					this.onerror(event, 'cannot connect');
-					this.onclose(event);
-					this.reconnect();
-					break;
+					return;
 				case 'outdated':
 					this.ondead(event);
 					this.halt();
-					break;
+					return;
 			}
 		}
 	}, {
@@ -171,8 +160,9 @@ var WS = function () {
 	}, {
 		key: 'calculateNextBackoff',
 		value: function calculateNextBackoff() {
+			if (this.reconnectAttempts == -1) return 0; // first time connect
 			var delaytime = this.reconnectInterval * Math.pow(this.reconnectDecay, this.reconnectAttempts);
-			return delaytime > this.maxReconnectInterval ? this.maxReconnectInterval : delaytime;
+			return Math.min(this.maxReconnectInterval, delaytime);
 		}
 	}, {
 		key: 'connect',
@@ -185,7 +175,7 @@ var WS = function () {
 
 			var timeout = setTimeout(function () {
 				ws = undefined;
-				_this3.dispatch('timeout', id);
+				_this3.dispatch('error', 'timeout');
 			}, this.timeoutInterval);
 
 			var dispatch = function dispatch(type, event) {
