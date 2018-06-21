@@ -1,4 +1,5 @@
 class WS {
+	// this should be called once, since sendloop will never be terminated
 	constructor(options) {
 		let defsettings = {
 			debug: false,
@@ -6,15 +7,15 @@ class WS {
 			maxReconnectInterval: 30000,
 			reconnectDecay: 1.5,
 			timeoutInterval: 10000,
-			// maxReconnectAttempts: 20,
+			maxReconnectAttempts: 20,
 			commitInterval: 2000,
-			pickUrl: done => done('')
+			pickUrl: done => done(''),
 		}
 		Object.assign(this, defsettings, options || {})
 		this.onerror = this.onopen = this.onclose = () => {}
 		this.msgQ = []
 		this.url = ''
-		this.connection_id = ''
+		this.connection_id = options.initConnection || ''
 		this.reconnectAttempts = -1
 		this.sendloop()
 		this.reconnect()
@@ -25,7 +26,7 @@ class WS {
 	}
 
 	sendloop() {
-		let handler = setInterval(() => {
+		setInterval(() => {
 			if (!this.ws || this.ws.readyState != env.WebSocket.OPEN) return
 			if (this.msgQ.length == 0) return
 			let max = Math.max(...this.msgQ)

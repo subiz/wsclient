@@ -7,6 +7,7 @@ function _toConsumableArray(arr) { if (Array.isArray(arr)) { for (var i = 0, arr
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 
 var WS = function () {
+	// this should be called once, since sendloop will never be terminated
 	function WS(options) {
 		_classCallCheck(this, WS);
 
@@ -16,7 +17,7 @@ var WS = function () {
 			maxReconnectInterval: 30000,
 			reconnectDecay: 1.5,
 			timeoutInterval: 10000,
-			// maxReconnectAttempts: 20,
+			maxReconnectAttempts: 20,
 			commitInterval: 2000,
 			pickUrl: function pickUrl(done) {
 				return done('');
@@ -26,7 +27,7 @@ var WS = function () {
 		this.onerror = this.onopen = this.onclose = function () {};
 		this.msgQ = [];
 		this.url = '';
-		this.connection_id = '';
+		this.connection_id = options.initConnection || '';
 		this.reconnectAttempts = -1;
 		this.sendloop();
 		this.reconnect();
@@ -48,7 +49,7 @@ var WS = function () {
 		value: function sendloop() {
 			var _this = this;
 
-			var handler = setInterval(function () {
+			setInterval(function () {
 				if (!_this.ws || _this.ws.readyState != env.WebSocket.OPEN) return;
 				if (_this.msgQ.length == 0) return;
 				var max = Math.max.apply(Math, _toConsumableArray(_this.msgQ));
