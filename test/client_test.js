@@ -111,17 +111,6 @@ function testServerDown(done) {
 	}
 }
 
-function testDead(done) {
-	var ws = new client.WS({
-		maxReconnectAttempts: 1,
-		pickUrl: done => done(`${host}/4`)
-	});
-
-	ws.ondead = () => {
-		done()
-	}
-}
-
 function testNormal(done) {
 	var ws = new client.WS({pickUrl: done => done(`${host}/1`)});
 	var connid = ""
@@ -155,14 +144,13 @@ function main() {
 		var done = 0
 		function donecheck() {
 			done++
-			if (done == 4) {
+			if (done == 3) {
 				console.log('PASS')
 				process.exit(0)
 			}
 		}
 		testServerDown(donecheck)
 		testServerDown2(donecheck)
-		testDead(donecheck)
 		testNormal(donecheck)
 	})
 }
