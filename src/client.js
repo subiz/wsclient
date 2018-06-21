@@ -31,7 +31,7 @@ class WS {
 			if (this.msgQ.length == 0) return
 			let max = Math.max(...this.msgQ)
 			this.debugInfo('send', max)
-			this.ws.send(max)
+			this.ws.send(max + '')
 			this.msgQ.length = 0
 		}, this.commitInterval)
 	}

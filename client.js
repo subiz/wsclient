@@ -54,7 +54,7 @@ var WS = function () {
 				if (_this.msgQ.length == 0) return;
 				var max = Math.max.apply(Math, _toConsumableArray(_this.msgQ));
 				_this.debugInfo('send', max);
-				_this.ws.send(max);
+				_this.ws.send(max + '');
 				_this.msgQ.length = 0;
 			}, this.commitInterval);
 		}
