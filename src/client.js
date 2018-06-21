@@ -14,7 +14,7 @@ class WS {
 		Object.assign(this, defsettings, options || {})
 		this.onconnected = this.onerror = this.onopen = this.onclose = () => {}
 		this.msgQ = []
-		this.url = ''
+		this.url = options.url || ''
 		this.connection_id = options.initConnection || ''
 		this.reconnectAttempts = -1
 		this.sendloop()
