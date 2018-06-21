@@ -24,7 +24,7 @@ var WS = function () {
 			}
 		};
 		Object.assign(this, defsettings, options || {});
-		this.onerror = this.onopen = this.onclose = function () {};
+		this.onconnected = this.onerror = this.onopen = this.onclose = function () {};
 		this.msgQ = [];
 		this.url = '';
 		this.connection_id = options.initConnection || '';
@@ -99,6 +99,7 @@ var WS = function () {
 						return;
 					}
 					this.connection_id = id;
+					this.onconnected(undefined, this.connection_id);
 					this.onopen(event, this.connection_id);
 					return;
 				case 'error':
@@ -151,6 +152,8 @@ var WS = function () {
 			var _this3 = this;
 
 			if (this.ws) return;
+			if (id) this.onconnected(undefined, this.connection_id);
+
 			var url = id ? this.url + '?connection_id=' + id : this.url;
 			var ws = this.ws = new env.WebSocket(url);
 

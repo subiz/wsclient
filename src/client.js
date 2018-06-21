@@ -12,7 +12,7 @@ class WS {
 			pickUrl: done => done(''),
 		}
 		Object.assign(this, defsettings, options || {})
-		this.onerror = this.onopen = this.onclose = () => {}
+		this.onconnected = this.onerror = this.onopen = this.onclose = () => {}
 		this.msgQ = []
 		this.url = ''
 		this.connection_id = options.initConnection || ''
@@ -72,6 +72,7 @@ class WS {
 				return
 			}
 			this.connection_id = id
+			this.onconnected(undefined, this.connection_id)
 			this.onopen(event, this.connection_id)
 			return
 		case 'error':
@@ -117,6 +118,8 @@ class WS {
 
 	connect(id) {
 		if (this.ws) return
+		if (id) this.onconnected(undefined, this.connection_id)
+
 		let url = id ? `${this.url}?connection_id=${id}` : this.url
 		let ws = this.ws = new env.WebSocket(url)
 
