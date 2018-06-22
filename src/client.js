@@ -17,7 +17,8 @@ class WS {
 		this.url = options.url || ''
 		this.connection_id = options.initConnection || ''
 		this.reconnectAttempts = -1
-		this.sendloop()
+		this.state = 'running'
+		this.loopsend()
 		this.reconnect()
 	}
 
@@ -25,8 +26,14 @@ class WS {
 		if (this.debug || WS.debugAll) console.debug('WS', this.url, ...msg)
 	}
 
-	sendloop() {
-		setInterval(() => {
+	destroy() {
+		this.state = 'dead'
+		this.ws && this.ws.close()
+	}
+
+	loopsend() {
+		let h = setInterval(() => {
+			if (this.state === 'dead') clearTimeout(h)
 			if (!this.ws || this.ws.readyState != env.WebSocket.OPEN) return
 			if (this.msgQ.length == 0) return
 			let max = Math.max(...this.msgQ)
@@ -94,6 +101,7 @@ class WS {
 
 	reconnect() {
 		// make sure to kill the last ws
+		if (this.state === 'dead') return
 		if (this.ws) this.ws.close()
 		this.ws = undefined
 

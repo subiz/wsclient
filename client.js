@@ -29,7 +29,8 @@ var WS = function () {
 		this.url = options.url || '';
 		this.connection_id = options.initConnection || '';
 		this.reconnectAttempts = -1;
-		this.sendloop();
+		this.state = 'running';
+		this.loopsend();
 		this.reconnect();
 	}
 
@@ -45,11 +46,18 @@ var WS = function () {
 			if (this.debug || WS.debugAll) (_console = console).debug.apply(_console, ['WS', this.url].concat(msg));
 		}
 	}, {
-		key: 'sendloop',
-		value: function sendloop() {
+		key: 'destroy',
+		value: function destroy() {
+			this.state = 'dead';
+			this.ws && this.ws.close();
+		}
+	}, {
+		key: 'loopsend',
+		value: function loopsend() {
 			var _this = this;
 
-			setInterval(function () {
+			var h = setInterval(function () {
+				if (_this.state === 'dead') clearTimeout(h);
 				if (!_this.ws || _this.ws.readyState != env.WebSocket.OPEN) return;
 				if (_this.msgQ.length == 0) return;
 				var max = Math.max.apply(Math, _toConsumableArray(_this.msgQ));
@@ -125,6 +133,7 @@ var WS = function () {
 			var _this2 = this;
 
 			// make sure to kill the last ws
+			if (this.state === 'dead') return;
 			if (this.ws) this.ws.close();
 			this.ws = undefined;
 
