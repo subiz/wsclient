@@ -33,7 +33,7 @@ class WS {
 
 	loopsend() {
 		let h = setInterval(() => {
-			if (this.state === 'dead') clearTimeout(h)
+			if (this.state === 'dead') clearInterval(h)
 			if (!this.ws || this.ws.readyState != env.WebSocket.OPEN) return
 			if (this.msgQ.length == 0) return
 			let max = Math.max(...this.msgQ)
