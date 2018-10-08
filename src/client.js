@@ -1,103 +1,99 @@
-class WS {
-	// this should be called once, since sendloop will never be terminated
-	constructor (options) {
-		let defsettings = {
-			debug: false,
-			reconnectInterval: 1000,
-			maxReconnectInterval: 30000,
-			reconnectDecay: 1.5,
-			timeoutInterval: 10000,
-			maxReconnectAttempts: 20,
-			commitInterval: 2000,
-			pickUrl: done => done(''),
-		}
-		Object.assign(this, defsettings, options || {})
-		this.onconnected = this.onerror = this.onopen = this.onclose = () => {}
-		this.msgQ = []
-		this.url = options.url || ''
-		this.connection_id = options.initConnection || ''
-		this.reconnectAttempts = -1
-		this.state = 'running'
-		this.loopsend()
-		this.reconnect()
+function WS (options) {
+	var ws = {}
+	var defsettings = {
+		debug: false,
+		reconnectInterval: 1000,
+		maxReconnectInterval: 30000,
+		reconnectDecay: 1.5,
+		timeoutInterval: 10000,
+		maxReconnectAttempts: 20,
+		commitInterval: 2000,
+		pickUrl: function (done) {
+			return done('')
+		},
+	}
+	Object.assign(ws, defsettings, options || {})
+	ws.onconnected = ws.onerror = ws.onopen = ws.onclose = function () {}
+	ws.msgQ = []
+	ws.url = options.url || ''
+	ws.connection_id = options.initConnection || ''
+	ws.reconnectAttempts = -1
+	ws.state = 'running'
+
+	ws.debugInfo = function (a, b) {
+		if (ws.debug || WS.debugAll) console.debug('WS', ws.url, a, b)
 	}
 
-	debugInfo (...msg) {
-		if (this.debug || WS.debugAll) console.debug('WS', this.url, ...msg)
+	ws.destroy = function () {
+		ws.state = 'dead'
+		ws.ws && ws.ws.close()
 	}
 
-	destroy () {
-		this.state = 'dead'
-		this.ws && this.ws.close()
+	ws.loopsend = function () {
+		var h = setInterval(function () {
+			if (ws.state === 'dead') clearInterval(h)
+			if (!ws.ws || ws.ws.readyState !== env.WebSocket.OPEN) return
+			if (ws.msgQ.length === 0) return
+			var max = getMax(ws.msgQ)
+			ws.debugInfo('send', max)
+			ws.ws.send(max + '')
+			ws.msgQ.length = 0
+		}, ws.commitInterval)
 	}
 
-	loopsend () {
-		let h = setInterval(() => {
-			if (this.state === 'dead') clearInterval(h)
-			if (!this.ws || this.ws.readyState !== env.WebSocket.OPEN) return
-			if (this.msgQ.length == 0) return
-			let max = Math.max(...this.msgQ)
-			this.debugInfo('send', max)
-			this.ws.send(max + '')
-			this.msgQ.length = 0
-		}, this.commitInterval)
+	ws.commit = function (offset) {
+		ws.msgQ.push(offset)
 	}
 
-	commit (offset) {
-		this.msgQ.push(offset)
-	}
-
-	dispatch (eventType, event) {
-		this.debugInfo({ eventType, event })
+	ws.dispatch = function (eventType, event) {
+		ws.debugInfo({ eventType: eventType, event: event })
 		switch (eventType) {
 		case 'open':
-			this.reconnectAttempts = -1
+			ws.reconnectAttempts = -1
 			break
 		case 'close':
-			this.onclose(event)
-			this.reconnect()
+			ws.onclose(event)
+			ws.reconnect()
 			break
 		case 'message':
-			var mes = this.parseMessage(event.data)
+			var mes = ws.parseMessage(event.data)
+
 			if (!mes || mes.type === 'error' || mes.error) {
-				this.onerror(event, mes.error || 'server error: invalid JSON')
-				this.onclose(event)
-				this.connection_id = ''
-				this.reconnect()
+				ws.onerror(event, mes.error || 'server error: invalid JSON')
+				ws.onclose(event)
+				ws.connection_id = ''
+				ws.reconnect()
 				break
 			}
 
 			if (mes && mes.type === 'init') {
 				var id = (mes.data && mes.data.id) || ''
 				if (!id) {
-					this.onerror(
-						event,
-						'server error: invalid message format, missing connection id'
-					)
-					this.onclose(event)
-					this.connection_id = ''
-					this.reconnect()
+					ws.onerror(event, 'err: invalid message, missing connection id')
+					ws.onclose(event)
+					ws.connection_id = ''
+					ws.reconnect()
 					break
 				}
 
-				this.connection_id = id
-				this.onconnected(undefined, this.connection_id)
-				this.onopen(event, this.connection_id)
+				ws.connection_id = id
+				ws.onconnected(undefined, ws.connection_id)
+				ws.onopen(event, ws.connection_id)
 				break
 			}
 
-			this.onmessage(event, mes.data, mes.offset)
+			ws.onmessage(event, mes.data, mes.offset)
 			break
 		case 'error':
-			this.onerror(event, event)
-			this.onclose(event)
-			this.reconnect()
+			ws.onerror(event, event)
+			ws.onclose(event)
+			ws.reconnect()
 			break
 		}
 	}
 
-	parseMessage (data) {
-		let message
+	ws.parseMessage = function (data) {
+		var message
 		try {
 			message = JSON.parse(data)
 			message.data = JSON.parse(message.data)
@@ -105,58 +101,74 @@ class WS {
 		return message
 	}
 
-	reconnect () {
+	ws.reconnect = function () {
 		// make sure to kill the last ws
-		if (this.state === 'dead') return
-		if (this.ws) this.ws.close()
-		this.ws = undefined
+		if (ws.state === 'dead') return
+		if (ws.ws) ws.ws.close()
+		ws.ws = undefined
 
-		let delay = this.calculateNextBackoff()
-		setTimeout(() => {
-			if (this.ws) throw 'should not hapend, library miss-used'
-			if (this.connection_id) this.connect(this.connection_id)
+		var delay = ws.calculateNextBackoff()
+		setTimeout(function () {
+			if (ws.ws) throw 'should not hapend, library miss-used'
+			if (ws.connection_id) ws.connect(ws.connection_id)
 			else {
-				this.pickUrl(url => {
-					if (this.ws) throw 'should not happed, libaray missused'
-					this.url = url
-					this.connect('')
+				ws.pickUrl(function (url) {
+					if (ws.ws) throw 'should not happed, libaray missused'
+					ws.url = url
+					ws.connect('')
 				})
 			}
 		}, delay)
-		this.reconnectAttempts++
+		ws.reconnectAttempts++
 	}
 
-	calculateNextBackoff () {
-		if (this.reconnectAttempts == -1) return 0 // first time connect
-		let delaytime =
-			this.reconnectInterval *
-			Math.pow(this.reconnectDecay, this.reconnectAttempts)
-		return Math.min(this.maxReconnectInterval, delaytime)
+	ws.calculateNextBackoff = function () {
+		if (ws.reconnectAttempts === -1) return 0 // first time connect
+		var delaytime =
+			ws.reconnectInterval * Math.pow(ws.reconnectDecay, ws.reconnectAttempts)
+		return Math.min(ws.maxReconnectInterval, delaytime)
 	}
 
-	connect (id) {
-		if (this.ws) return
-		if (id) this.onconnected(undefined, this.connection_id)
+	ws.connect = function (id) {
+		if (ws.ws) return
+		if (id) ws.onconnected(undefined, ws.connection_id)
 
-		let url = id ? `${this.url}?connection_id=${id}` : this.url
-		let ws = (this.ws = new env.WebSocket(url))
+		var url = id ? ws.url + '?connection_id=' + id : ws.url
+		var wsclient = (ws.ws = new env.WebSocket(url))
+		var timeout = setTimeout(function () {
+			wsclient = undefined
+			ws.dispatch('error', 'timeout')
+		}, ws.timeoutInterval)
 
-		let timeout = setTimeout(() => {
-			ws = undefined
-			this.dispatch('error', 'timeout')
-		}, this.timeoutInterval)
-
-		let dispatch = (type, event) => {
+		var dispatch = function (type, event) {
 			clearTimeout(timeout)
-			if (ws && ws === this.ws) this.dispatch(type, event)
+			if (wsclient && wsclient === ws.ws) ws.dispatch(type, event)
 		}
 
-		ws.onopen = ev => dispatch('open', ev)
-		ws.onclose = ev => dispatch('close', ev)
-		ws.onerror = ev => dispatch('error', ev)
-		ws.onmessage = ev => dispatch('message', ev)
+		wsclient.onopen = function (ev) {
+			dispatch('open', ev)
+		}
+		wsclient.onclose = function (ev) {
+			dispatch('close', ev)
+		}
+		wsclient.onerror = function (ev) {
+			dispatch('error', ev)
+		}
+		wsclient.onmessage = function (ev) {
+			dispatch('message', ev)
+		}
 	}
+	ws.loopsend()
+	ws.reconnect()
+	return ws
 }
 
 var env = { WebSocket: {} }
-module.exports = { WS, env }
+module.exports = { WS: WS, env: env }
+
+function getMax (arr) {
+	if (!arr) return
+	var max = arr[0]
+	for (var i in arr) if (max < arr[i]) max = arr[i]
+	return max
+}
