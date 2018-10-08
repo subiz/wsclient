@@ -3,12 +3,12 @@ var client = require('../src/client.js')
 client.env.WebSocket = WebSocket
 
 const server = require('./test_server.js').server
-var host = "ws://localhost:8088"
-function testServerDown2(done) {
+var host = 'ws://localhost:8088'
+function testServerDown2 (done) {
 	var r = Math.random()
-	var ws = new client.WS({pickUrl: done => done(`${host}/3/${r}`)});
+	var ws = new client.WS({ pickUrl: done => done(`${host}/3/${r}`) })
 
-	var connid = ""
+	var connid = ''
 	var fistconnect = true
 	var connected = 0
 	ws.onopen = (a, id) => {
@@ -21,7 +21,7 @@ function testServerDown2(done) {
 		mescount++
 		if (mescount == 1) {
 			if (connected != 1) {
-				throw "invalid connection id"
+				throw 'invalid connection id'
 			}
 
 			if (mes != 1) {
@@ -30,7 +30,7 @@ function testServerDown2(done) {
 			return
 		}
 		if (mescount == 2) {
-			if (connid != 4) throw "wrong connid"
+			if (connid != 4) throw 'wrong connid'
 			if (connected != 2) throw `wrong connected time, got ${connected}`
 			if (closed != 3) throw `wrong closed time, got ${closed}`
 			if (errcount != 0) throw `wrong err count, got ${errcount}`
@@ -44,7 +44,7 @@ function testServerDown2(done) {
 		closed++
 		if (closed == 1) {
 			if (connected != 1) {
-				throw "invalid state"
+				throw 'invalid state'
 			}
 		}
 	}
@@ -55,11 +55,11 @@ function testServerDown2(done) {
 	}
 }
 
-function testServerDown(done) {
+function testServerDown (done) {
 	var r = Math.random()
-	var ws = new client.WS({pickUrl: done => done(`${host}/2/${r}`)});
+	var ws = new client.WS({ pickUrl: done => done(`${host}/2/${r}`) })
 
-	var connid = ""
+	var connid = ''
 	var fistconnect = true
 	var connected = 0
 	ws.onopen = (a, id) => {
@@ -72,7 +72,7 @@ function testServerDown(done) {
 		mescount++
 		if (mescount == 1) {
 			if (connected != 1) {
-				throw "invalid connection id"
+				throw 'invalid connection id'
 			}
 
 			if (mes != 1) {
@@ -95,7 +95,7 @@ function testServerDown(done) {
 		closed++
 		if (closed == 1) {
 			if (connected != 1) {
-				throw "invalid state"
+				throw 'invalid state'
 			}
 		}
 	}
@@ -104,26 +104,28 @@ function testServerDown(done) {
 	ws.onerror = (a, err) => {
 		errcount++
 		if (errcount == 1) {
-			if (err != "dead") {
+			if (err != 'dead') {
 				throw `invalid error message ${JSON.stringify(err)}`
 			}
 		}
 	}
 }
 
-function testNormal(done) {
-	var ws = new client.WS({pickUrl: done => done(`${host}/1`)});
-	var connid = ""
+function testNormal (done) {
+	var ws = new client.WS({ pickUrl: done => done(`${host}/1`) })
+	var connid = ''
 	ws.onopen = (a, id) => {
+		console.log("a")
 		connid = id
 	}
 
 	var first = true
+
 	ws.onmessage = (a, mes) => {
 		if (first) {
 			first = false
-			if (connid == "") {
-				throw "invalid connection id"
+			if (connid == '') {
+				throw 'invalid connection id'
 			}
 
 			if (mes != 1) {
@@ -137,14 +139,15 @@ function testNormal(done) {
 		}
 		done()
 	}
+	console.log("b")
 }
 
-function main() {
+function main () {
 	server.listen(8088, () => {
 		var done = 0
-		function donecheck() {
+		function donecheck () {
 			done++
-			if (done == 3) {
+			if (done === 3) {
 				console.log('PASS')
 				process.exit(0)
 			}

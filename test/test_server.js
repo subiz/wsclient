@@ -10,13 +10,17 @@ const wss3 = new WebSocket.Server({ noServer: true })
 
 let counter = {}
 
-function getID(path) {
+function getID (path) {
 	const pathname = url.parse(path).pathname
 	return pathname.split('/')
 }
 
 wss1.on('connection', ws => {
-	ws.send(`{"offset": 0, "data": ${JSON.stringify(JSON.stringify({id: "aaa"}))}}`)
+	ws.send(
+		`{"type": "init", "offset": 0, "data": ${JSON.stringify(
+			JSON.stringify({ id: 'aaa' })
+		)}}`
+	)
 	ws.send(`{"offset": 1, "data":"1"}`)
 	ws.send(`{"offset": 2, "data":"2"}`)
 })
@@ -35,7 +39,11 @@ wss2.on('connection', (ws, request) => {
 	//console.log('params', params)
 
 	if (counter[id] == 1) {
-		ws.send(`{"offset": 0, "data": ${JSON.stringify(JSON.stringify({id: counter[id]}))}}`)
+		ws.send(
+			`{"type": "init", "offset": 0, "data": ${JSON.stringify(
+				JSON.stringify({ id: counter[id] })
+			)}}`
+		)
 		ws.send(`{"offset": 1, "data":"1"}`)
 		ws.terminate()
 		return
@@ -56,14 +64,17 @@ wss2.on('connection', (ws, request) => {
 		return
 	}
 
-
 	if (counter[id] === 5) {
 		// console.log("server", "heaer")
 		if (Object.keys(params).length > 0) {
 			throw new Error('query string is not empty')
 		}
 
-		ws.send(`{"offset": 0, "data": ${JSON.stringify(JSON.stringify({id: counter[id]}))}}`)
+		ws.send(
+			`{"type": "init", "offset": 0, "data": ${JSON.stringify(
+				JSON.stringify({ id: counter[id] })
+			)}}`
+		)
 		ws.send(`{"offset": 1, "data":"2"}`)
 	}
 })
@@ -77,7 +88,11 @@ wss3.on('connection', (ws, request) => {
 	// console.log(`[${id}] new connection`, counter[id])
 
 	if (counter[id] == 1) {
-		ws.send(`{"offset": 0, "data": ${JSON.stringify(JSON.stringify({id: counter[id]}))}}`)
+		ws.send(
+			`{"type": "init", "offset": 0, "data": ${JSON.stringify(
+				JSON.stringify({ id: counter[id] })
+			)}}`
+		)
 		ws.send(`{"offset": 1, "data":"1"}`)
 		ws.terminate()
 		return
@@ -89,7 +104,11 @@ wss3.on('connection', (ws, request) => {
 	}
 
 	if (counter[id] === 4) {
-		ws.send(`{"offset": 0, "data": ${JSON.stringify(JSON.stringify({id: counter[id]}))}}`)
+		ws.send(
+			`{"type": "init", "offset": 0, "data": ${JSON.stringify(
+				JSON.stringify({ id: counter[id] })
+			)}}`
+		)
 		ws.send(`{"offset": 1, "data":"2"}`)
 	}
 })
@@ -115,7 +134,7 @@ server.on('upgrade', (request, socket, head) => {
 		break
 	default:
 		socket.destroy()
-}
+	}
 })
 
 exports.server = server
