@@ -57,6 +57,7 @@ function WS (options) {
 			ws.reconnect()
 			break
 		case 'message':
+			// prevent duplicate here
 			var mes = ws.parseMessage(event.data)
 
 			if (!mes || mes.type === 'error' || mes.error) {
@@ -165,11 +166,45 @@ function WS (options) {
 }
 
 var env = { WebSocket: {} }
-module.exports = { WS: WS, env: env }
+module.exports = { WS: WS, env: env, SizedSet: SizedSet }
 
 function getMax (arr) {
 	if (!arr) return
 	var max = arr[0]
 	for (var i in arr) if (max < arr[i]) max = arr[i]
 	return max
+}
+
+// Just a Javascript Set with limited size, appending a new item (key) on a full SizedSet
+// will result in deletion of the oldest item (key)
+function SizedSet (maxKeys) {
+	if (!maxKeys || maxKeys <= 0) maxKeys = 100
+	var me = {
+		data: {},
+	}
+
+	// note that we must append '_' to any key to preserve key ordering in me.data
+	// we order keys by append time, not by the value
+	// when you write "x['5'] = true", Javascript will convert to "x[5] = true"
+	// and mess up our ordering
+
+	// tell if a key is existed in the set
+	me.has = function (key) {
+		key += '_'
+		return !!me.data[key]
+	}
+
+	// append a key to the set
+	// do nothing if the key is existed
+	// appending a new item (key) on a full SizedSet will result in deletion of
+	// the oldest item (key)
+	me.add = function (key) {
+		key += '_'
+		if (me.data[key]) delete me.data[key]
+		// remove the first key if set is full
+		var allkeys = Object.keys(me.data)
+		if (allkeys.length === maxKeys) delete me.data[allkeys[0]]
+		me.data[key] = true
+	}
+	return me
 }
