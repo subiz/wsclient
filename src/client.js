@@ -20,7 +20,7 @@ function WS (options) {
 	ws.connection_id = options.initConnection || ''
 	ws.reconnectAttempts = -1
 	ws.state = 'running'
-
+	ws.receivedMsgs = new SizedSet(1000)
 	ws.debugInfo = function (a, b) {
 		if (ws.debug || WS.debugAll) console.debug('WS', ws.url, a, b)
 	}
@@ -57,7 +57,6 @@ function WS (options) {
 			ws.reconnect()
 			break
 		case 'message':
-			// prevent duplicate here
 			var mes = ws.parseMessage(event.data)
 
 			if (!mes || mes.type === 'error' || mes.error) {
@@ -83,6 +82,10 @@ function WS (options) {
 				ws.onopen(event, ws.connection_id)
 				break
 			}
+
+			// prevent duplicate message
+			if (ws.receivedMsgs.has(mes.offset)) break
+			ws.receivedMsgs.add(mes.offset)
 
 			ws.onmessage(event, mes.data, mes.offset)
 			break
