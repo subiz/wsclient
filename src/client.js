@@ -7,6 +7,7 @@ function WS (options) {
 		reconnectDecay: 1.5,
 		timeoutInterval: 10000,
 		maxReconnectAttempts: 20,
+		jsonParse: JSON.parse,
 		commitInterval: 2000,
 		pickUrl: function (done) {
 			return done('')
@@ -95,8 +96,8 @@ function WS (options) {
 	ws.parseMessage = function (data) {
 		var message
 		try {
-			message = JSON.parse(data)
-			message.data = JSON.parse(message.data)
+			message = ws.jsonParse(data)
+			message.data = ws.jsonParse(message.data)
 		} catch (e) {}
 		return message
 	}
