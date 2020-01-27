@@ -2,13 +2,13 @@ function WS (options) {
 	var ws = {}
 	var defsettings = {
 		debug: false,
-		reconnectInterval: 1000,
-		maxReconnectInterval: 30000,
+		reconnectInterval: 2000,
+		maxReconnectInterval: 40000,
 		reconnectDecay: 1.5,
 		timeoutInterval: 10000,
-		maxReconnectAttempts: 20,
+		maxReconnectAttempts: 10,
 		jsonParse: JSON.parse,
-		commitInterval: 2000,
+		commitInterval: 5000,
 		pickUrl: function (done) {
 			return done('')
 		},
