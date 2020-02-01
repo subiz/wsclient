@@ -1,3 +1,6 @@
+function retryable (code) {
+	return code === 500 || code === -1 || code === 429
+}
 //
 // conn = new Conn({user_mask: 'asdlfjasdf', () => {}, () => {}})
 // conn.subscribe() // start
@@ -11,10 +14,30 @@ function Conn (credential, onDead, onEvents) {
 	var connectionSeek = randomString() // used to determind connection id
 
 	// force dead
-	this.dead = function () {
+	this.kill = function () {
 		dead = true
 	}
 
+	// user should not call this function
+	var polling = function (token, backoff) {
+		if (dead) return
+		xhrsend('GET', `${apiUrl}poll?token=${token}`, undefined, undefined, function (body, code) {
+			if (dead) return
+			if (retryable(code)) return setTimeout(polling, calcNextBackoff(backoff), token, backoff + 1)
+			if (code !== 200) {
+				// unretryable error, should kill
+				dead = true
+				return onDead()
+			}
+
+			// 200, success
+			body = parseJSON(body)
+			onEvents(body.events)
+			return polling(body.sequential_token, 0)
+		})
+	}
+
+	var thethis = this
 	this.subscribe = function (events, cb) {
 		if (dead) return cb('dead')
 		if (events.length <= 0) return cb()
@@ -26,40 +49,19 @@ function Conn (credential, onDead, onEvents) {
 		if (credential.user_mask) {
 			query += `&x-user-mask=${encodeURIComponent(credential.user_mask)}`
 		}
-		xhrsend('POST', `${apiUrl}subs${query}`, JSON.stringify({ events }), header, function (_, body, code) {
+		xhrsend('POST', `${apiUrl}subs${query}`, JSON.stringify({ events }), header, function (body, code) {
 			if (dead) return cb('dead')
+			if (retryable(code)) return setTimeout(thethis.subscribe, 3000, events, cb)
+
+			// unretryable error
 			if (code !== 200) return cb('cannot subscribe')
 
+			// success
 			if (initialized) return cb()
 			initialized = true
 			// first time sub, should grab the initial token
 			polling(parseJSON(body).initial_token, 0) // start the poll
 			cb()
-		})
-	}
-
-	// user should not call this function
-	var polling = function (token, backoff) {
-		if (dead) return
-		xhrsend('GET', `${apiUrl}poll?token=${token}`, undefined, undefined, function (status, body, code) {
-			if (dead) return
-			if (code === 500) {
-				// TODO: or lost network connection, move this code to xhrsend
-				setTimeout(function () {
-					polling(token, backoff + 1)
-				}, calcNextBackoff(backoff))
-				return
-			}
-
-			if (code === 200) {
-				body = parseJSON(body)
-				onEvents(body.events)
-				return polling(body.sequential_token, 0)
-			}
-
-			// our fault, should kill
-			dead = true
-			onDead()
 		})
 	}
 }
@@ -86,7 +88,7 @@ function Realtime () {
 
 	this.reset = function (credential) {
 		credential = credential || {}
-		if (lastConn) lastConn.dead()
+		if (lastConn) lastConn.kill()
 		lastConn = undefined
 
 		// generate new sesion id, old callbacks with old session will realize and step down
@@ -122,7 +124,7 @@ function Realtime () {
 
 	var reconnect = function (mysession, credential) {
 		if (mysession !== session || stop) return // outdated
-		if (lastConn) lastConn.dead()
+		if (lastConn) lastConn.kill()
 		lastConn = new Conn(
 			credential,
 			function () {
@@ -133,7 +135,7 @@ function Realtime () {
 			function (events) {
 				map(events, function (ev) {
 					pubsub.emit('event', ev)
-				}) // TODO: prevent dup
+				})
 			},
 		)
 
@@ -144,25 +146,21 @@ function Realtime () {
 
 // TODO retry forever on network lost, server return 500 or 502 or 429
 function xhrsend (method, url, body, header, cb) {
-	cb = cb || function () {}
-
 	var request = new window.XMLHttpRequest()
 	request.onreadystatechange = function (e) {
 		if (request.readyState !== 4) return
-
-		cb(undefined, request.responseText, request.status)
+		cb && cb(request.responseText, request.status)
 	}
 
 	request.onerror = function () {
-		cb('network_error', request.responseText)
-		cb = function () {} // dont call cb anymore
+		cb && cb(request.responseText, -1) // network error
+		cb = undefined // dont call cb anymore
 	}
 
 	request.open(method, url)
-	var headerKeys = header ? Object.keys(header) : []
-	for (var i = 0; i < headerKeys.length; i++) {
-		request.setRequestHeader(headerKeys[i], header[headerKeys[i]])
-	}
+	map(header, function (v, k) {
+		request.setRequestHeader(k, v)
+	})
 	request.send(body)
 }
 
@@ -181,16 +179,16 @@ function randomString () {
 	return str
 }
 
-var DELI = '-[/]-'
-
 function Pubsub () {
 	var listeners = []
+	var DELI = '-[/]-'
 
 	this.emit = function (topic) {
-		var args = []
-		for (var i = 1; i < arguments.length; i++) args.push(arguments[i])
+		var args = filter(arguments, function (_, i) {
+			return i > 0
+		})
 		map(listeners[topic], function (cb) {
-			return cb.apply(undefined, args)
+			cb.apply(undefined, args)
 		})
 	}
 
@@ -202,52 +200,48 @@ function Pubsub () {
 	}
 
 	this.un = function (subid) {
-		if (!subid) return
+		if (!subid || !subid.split) return
 		var topic = subid.split(DELI)[0]
 		if (!listeners[topic]) return
 		delete listeners[topic][subid]
 	}
 }
 
-var RECONNECT_INTERVAL = 1000
-var MAX_RECONNECT_INTERVAL = 30000
-var RECONNECT_DECAY = 1.5
 function calcNextBackoff (attempts) {
+	var RECONNECT_INTERVAL = 1000
+	var MAX_RECONNECT_INTERVAL = 30000
+	var RECONNECT_DECAY = 1.5
+
 	if (!attempts || attempts === -1) return 0 // first time connect
 	var delaytime = RECONNECT_INTERVAL * Math.pow(RECONNECT_DECAY, attempts)
 	return Math.min(MAX_RECONNECT_INTERVAL, delaytime)
 }
 
-function map (collection, predicate) {
+function map (collection, func) {
 	if (!collection) return []
-	if (!predicate) return collection
+	if (!func) return collection
 
 	var out = []
 	if (Array.isArray(collection)) {
-		for (var i = 0; i < collection.length; i++) {
-			out.push(predicate(collection[i], i))
-		}
+		for (var i = 0; i < collection.length; i++) out.push(func(collection[i], i))
 		return out
 	}
 
-	if (typeof collection === 'object') {
-		var keys = Object.keys(collection)
-		for (var i = 0; i < keys.length; i++) {
-			var k = keys[i]
-			out.push(predicate(collection[k], k))
-		}
-		return out
-	}
+	if (typeof collection !== 'object') return []
 
+	var keys = Object.keys(collection)
+	for (var i = 0; i < keys.length; i++) {
+		var k = keys[i]
+		out.push(func(collection[k], k))
+	}
 	return out
 }
 
-function filter (collection, predicate) {
-	if (!Array.isArray(collection)) return []
+function filter (arr, func) {
 	var out = []
-	for (var i = 0; i < collection.length; i++) {
-		if (predicate(collection[i], i)) out.push(collection[i])
-	}
+	map(arr, function (v, i) {
+		if (func(v, i)) out.push(v)
+	})
 	return out
 }
 
