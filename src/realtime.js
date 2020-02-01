@@ -1,24 +1,40 @@
-function retryable (code) {
-	return code === 500 || code === -1 || code === 429
-}
+// Conn represents a realtime connection between an user and the realtime
+// server (https://realtime-0.subiz.com)
 //
-// conn = new Conn({user_mask: 'asdlfjasdf', () => {}, () => {}})
-// conn.subscribe() // start
-// when connection is dead, it only calls onDead once, after that this object is useless
-// its resource will be clear, no more settimeout is created
+// You can subscribe for realtime events and it will sent you new events
+// as fast as possible through onEvents callback.
+//
+// It will try it best to keep the communication with the realtime
+// server. But if the user is offline for too long or her network can't
+// keep up with the incomming events (rarely happend with today
+// internet speed). The connection will be halt. Dead.
+//
+// Once dead, onDead will be called. After that, the connection is
+// useless, all resources will be released.
 function Conn (credential, onDead, onEvents) {
 	credential = credential || {}
+	// tell if connection is dead
 	var dead = false
-	var apiUrl = 'https://realtime-0.subiz.net/'
-	var initialized = false
-	var connectionSeek = randomString() // used to determind connection id
 
-	// force dead
+	var apiUrl = 'https://realtime-0.subiz.net/'
+
+	// is long polling started?
+	var initialized = false
+
+	// used to determind connection id
+	// server will see two Conns with the same connection seek as one
+	var connectionSeek = randomString()
+
+	// kill force the connection to dead state
 	this.kill = function () {
 		dead = true
 	}
 
-	// user should not call this function
+	// long polling loop, polling will run sequentialy. Each polling will start right
+	// after the previous returned. In case of error, polling loop will pause based on
+	// exponential backoff algorithm. Polling loop will terminate if it encounter an
+	// un-retryable error
+	// the polling loop starts after the first subscribe call finished successfully
 	var polling = function (token, backoff) {
 		if (dead) return
 		xhrsend('GET', `${apiUrl}poll?token=${token}`, undefined, undefined, function (body, code) {
@@ -32,11 +48,17 @@ function Conn (credential, onDead, onEvents) {
 
 			// 200, success
 			body = parseJSON(body)
-			onEvents(body.events)
-			return polling(body.sequential_token, 0)
+
+			var sequentialToken = body.sequential_token
+			// the server returns a malform payload. We should retry and hope it heal soon
+			if (!sequentialToken) return setTimeout(polling, calcNextBackoff(backoff), token, backoff + 1)
+			onEvents(body.events || [])
+			return polling(sequentialToken, 0)
 		})
 	}
 
+	// subscribe call /subs API to tell server that we are listening for those events
+	// this function may start polling loop if it hasn't been started yet
 	var thethis = this
 	this.subscribe = function (events, cb) {
 		if (dead) return cb('dead')
@@ -54,25 +76,52 @@ function Conn (credential, onDead, onEvents) {
 			if (retryable(code)) return setTimeout(thethis.subscribe, 3000, events, cb)
 
 			// unretryable error
-			if (code !== 200) return cb('cannot subscribe')
+			if (code !== 200) {
+				// don't try to kill the connection just because we can't subscribe
+				if (initialized) return cb('cannot subscribe')
+
+				// we are unable to start the communication with realtime server.
+				// Must notify the user by killing the connection
+				dead = true
+				onDead()
+				return cb()
+			}
 
 			// success
 			if (initialized) return cb()
 			initialized = true
+
+			var initialToken = parseJSON(body).initial_token
+			// the server returns a malform payload. We should retry and hope it heal soon
+			if (!initialToken) return setTimeout(thethis.subscribe, 3000, events, cb)
 			// first time sub, should grab the initial token
-			polling(parseJSON(body).initial_token, 0) // start the poll
+			polling(initialToken, 0) // start the poll
 			cb()
 		})
 	}
 }
 
-function Realtime () {
+// Realtime is just a stronger Conn.
+// This class helps you subscribe and listen realtime event from the
+// realtime server
+// additional features compare to conn:
+//   + auto recreate and resub if the last conn is dead
+//   + don't subscribe already subscribed events
+function Realtime (credential) {
+	credential = credential || {}
+
 	var stop = false
+
 	var pubsub = new Pubsub()
 
-	var lastConn
+	// holds all subscribed event as its keys
 	var subscribedEvents = {}
-	var session = randomString()
+
+	// stop the connection
+	this.stop = function () {
+		stop = true
+		if (conn) conn.kill()
+	}
 
 	this.un = function (subid) {
 		pubsub.un(subid)
@@ -86,33 +135,17 @@ function Realtime () {
 		return pubsub.on('interrupted', cb)
 	}
 
-	this.reset = function (credential) {
-		credential = credential || {}
-		if (lastConn) lastConn.kill()
-		lastConn = undefined
-
-		// generate new sesion id, old callbacks with old session will realize and step down
-		session = randomString() //
-
-		// logout
-		if (!credential.access_token && !credential.user_mask) {
-			stop = true
-			return
-		}
-		stop = false
-		return reconnect(session, credential)
-	}
-
+	var conn
 	this.subscribe = function (events) {
 		return new Promise(function (rs) {
+			if (stop) return rs()
+
 			// ignore already subscribed events
 			var newEvs = filter(events, function (ev) {
 				return !subscribedEvents[ev]
 			})
 			if (newEvs.length === 0) return rs()
-			if (!lastConn) rs('must reset first')
-
-			lastConn.subscribe(newEvs, function (err) {
+			conn.subscribe(newEvs, function (err) {
 				if (err) return rs(err)
 				map(newEvs, function (ev) {
 					subscribedEvents[ev] = true
@@ -122,15 +155,16 @@ function Realtime () {
 		})
 	}
 
-	var reconnect = function (mysession, credential) {
-		if (mysession !== session || stop) return // outdated
-		if (lastConn) lastConn.kill()
-		lastConn = new Conn(
+	// reconnect make sure there is alway a Conn running is the background
+	// if the Conn is dead, it recreate a new one
+	var reconnect = function () {
+		if (stop) return
+		conn = new Conn(
 			credential,
 			function () {
-				if (mysession !== session || stop) return // outdated
+				if (stop) return // outdated
 				pubsub.emit('interrupted')
-				reconnect(mysession, credential) // reconnect and resubscribe
+				reconnect() // reconnect and resubscribe
 			},
 			function (events) {
 				map(events, function (ev) {
@@ -139,12 +173,13 @@ function Realtime () {
 			},
 		)
 
-		// resubscribe all subscribed event
-		return lastConn.subscribe(Object.keys(subscribedEvents))
+		// resubscribe all subscribed events
+		conn.subscribe(Object.keys(subscribedEvents))
 	}
+	reconnect()
 }
 
-// TODO retry forever on network lost, server return 500 or 502 or 429
+// xhrsend sends an HTTP request
 function xhrsend (method, url, body, header, cb) {
 	var request = new window.XMLHttpRequest()
 	request.onreadystatechange = function (e) {
@@ -164,12 +199,15 @@ function xhrsend (method, url, body, header, cb) {
 	request.send(body)
 }
 
+// JSON.parse without exeption
+// return undefined when parsing invalid JSON string
 function parseJSON (str) {
 	try {
 		return parseJSON(str)
 	} catch (e) {}
 }
 
+// randomString generates a 30 characters random string
 function randomString () {
 	var str = ''
 	for (var i = 0; i < 30; i++) {
@@ -180,9 +218,18 @@ function randomString () {
 }
 
 function Pubsub () {
-	var listeners = []
+	// holds all subscriptions for all topics
+	// example {
+	//   topic1: {sub1: cb1, sub2: cb2},
+	//   topic2: {sub3: cb3, sub4: cb4},
+	// }
+	var listeners = {}
+
+	// delimiter, used to generate topic. Topic = <topic><DELI><randomstr>
 	var DELI = '-[/]-'
 
+	// emit notifies any callback functions that previously
+	// subscribed to the topic (by the on function)
 	this.emit = function (topic) {
 		var args = filter(arguments, function (_, i) {
 			return i > 0
@@ -192,6 +239,11 @@ function Pubsub () {
 		})
 	}
 
+	// register a callback function for a topic
+	// when something is sent to the topic (by the emit function),
+	// the callback function will be called
+	// this function returns a string represent the subscription
+	// user can use the string to unsubscribe
 	this.on = function (topic, cb) {
 		var subid = topic + DELI + randomString(20)
 		if (!listeners[topic]) listeners[topic] = {}
@@ -199,6 +251,7 @@ function Pubsub () {
 		return subid
 	}
 
+	// remove a subscription
 	this.un = function (subid) {
 		if (!subid || !subid.split) return
 		var topic = subid.split(DELI)[0]
@@ -207,6 +260,10 @@ function Pubsub () {
 	}
 }
 
+// calcNextBackoff returns number of seconds we must wait
+// before sending a next request
+// the results is determind based on exponential backoff algorithm
+// see https://en.wikipedia.org/wiki/Exponential_backoff
 function calcNextBackoff (attempts) {
 	var RECONNECT_INTERVAL = 1000
 	var MAX_RECONNECT_INTERVAL = 30000
@@ -217,6 +274,7 @@ function calcNextBackoff (attempts) {
 	return Math.min(MAX_RECONNECT_INTERVAL, delaytime)
 }
 
+// like lodash.map
 function map (collection, func) {
 	if (!collection) return []
 	if (!func) return collection
@@ -229,20 +287,28 @@ function map (collection, func) {
 
 	if (typeof collection !== 'object') return []
 
+	// object
 	var keys = Object.keys(collection)
 	for (var i = 0; i < keys.length; i++) {
-		var k = keys[i]
-		out.push(func(collection[k], k))
+		var key = keys[i]
+		out.push(func(collection[key], key))
 	}
 	return out
 }
 
+// like lodash.filter
 function filter (arr, func) {
 	var out = []
 	map(arr, function (v, i) {
 		if (func(v, i)) out.push(v)
 	})
 	return out
+}
+
+// retryable decides whether we should resent the HTTP request
+// based on last response or network state
+function retryable (code) {
+	return code === 500 || code === -1 || code === 429
 }
 
 module.exports = Realtime

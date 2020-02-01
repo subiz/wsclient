@@ -1,58 +1,23 @@
-# Subiz ws client
+# Subiz rtclient
 
-This library implements subiz ws protocol
+This library implements subiz long polling protocol
 
-# Example
+## Method
+### subscribe
+### onEvents
+### onInterrupted
+### stop
+
+## Example
 ```
-let WS = require('@subiz/wsclient').WS
-var ws = new WS({
-	pickUrl: done => {
-		let urls = ["ws-a.subiz.com", "ws-b.subiz.com", "ws-c.subiz.com"]
-		let url = urls[Math.round(Math.random() * urls.length)]
-		done(url)
-	},
-})
-ws.onopen = (ev, id) => console.log("new connection id", id)
-ws.onclose = () => console.log("disconnected, should refresh browser")
-ws.onerror = (ev, err) => console.error("err", err)
-ws.onmessage = (ev, mes, offset) => {
-	console.log("new message", msg)
-	ws.commit(offset)
-}
+var Realtime = require('@subiz/wsclient')
+var realtime = new Realtime({account_id: 'ac1234', access_token: '333344', user_mask: 'mask123'})
+
+realtime.onEvent(ev => console.log(ev))
+realtime.onInterrupted(() => console.log('some message may have been losted'))
+
+// subscribe events
+realtime.subscribe([ev1, ev2, ev3])
+
+realtime.stop()
 ```
-If you have init connection id, pass it through initConnection
-```
-let WS = require('@subiz/wsclient').WS
-var ws = new WS({
-	pickUrl: done => {
-		let urls = ['ws-a.subiz.com', 'ws-b.subiz.com', 'ws-c.subiz.com']
-		let url = urls[Math.round(Math.random() * urls.length)]
-		done(url)
-	},
-	initConnection: '0wsadflkj43453444332',
-})
-```
-
-# Config
-
-### debug: false
-turn on debug mode, print out debug message
-
-### reconnectInterval: 1000
-lower bound reconnect interval
-
-### maxReconnectInterval: 30000
-upper bound reconnect interval
-
-### reconnectDecay: 1.5
-
-### timeoutInterval: 2000
-time waited to connect
-
-### maxReconnectAttempts: null,
-
-### pickUrl: done => done("")
-this function get call every time we need connection to new ws
-
-### initConnection
-pass init connection id to ws client
