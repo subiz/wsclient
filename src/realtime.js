@@ -11,7 +11,8 @@
 //
 // Once dead, onDead will be called. After that, the connection is
 // useless, all resources will be released.
-function Conn (credential, onDead, onEvents) {
+function Conn (credential, onDead, onEvents, callAPI) {
+	callAPI = callAPI || xhrsend // allow hook
 	credential = credential || {}
 	// tell if connection is dead
 	var dead = false
@@ -37,7 +38,7 @@ function Conn (credential, onDead, onEvents) {
 	// the polling loop starts after the first subscribe call finished successfully
 	var polling = function (token, backoff) {
 		if (dead) return
-		xhrsend('GET', `${apiUrl}poll?token=${token}`, undefined, undefined, function (body, code) {
+		callAPI('get', `${apiUrl}poll?token=${token}`, undefined, function (body, code) {
 			if (dead) return
 			if (retryable(code)) return setTimeout(polling, calcNextBackoff(backoff), token, backoff + 1)
 			if (code !== 200) {
@@ -63,15 +64,15 @@ function Conn (credential, onDead, onEvents) {
 	this.subscribe = function (events, cb) {
 		if (dead) return cb('dead')
 		if (events.length <= 0) return cb()
-		var header = { 'content-type': 'text/plain' }
-		if (credential.access_token) {
-			header.Authorization = 'Bearer ' + credential.access_token
-		}
 		var query = `?seek=${connectionSeek}`
-		if (credential.user_mask) {
-			query += `&x-user-mask=${encodeURIComponent(credential.user_mask)}`
-		}
-		xhrsend('POST', `${apiUrl}subs${query}`, JSON.stringify({ events }), header, function (body, code) {
+
+		// prepare authorization
+		var access_token = credential.getAccessToken && credential.getAccessToken()
+		if (credential.user_mask) query += `&user-mask=${encodeURIComponent(credential.user_mask)}`
+		else if (access_token) query += `&access-token=${access_token}`
+
+		callAPI('post', `${apiUrl}subs${query}`, JSON.stringify({ events }), function (body, code) {
+			console.log("HHHHHHH", body, code)
 			if (dead) return cb('dead')
 			if (retryable(code)) return setTimeout(thethis.subscribe, 3000, events, cb)
 
@@ -91,7 +92,8 @@ function Conn (credential, onDead, onEvents) {
 			if (initialized) return cb()
 			initialized = true
 
-			var initialToken = parseJSON(body).initial_token
+			body = parseJSON(body) || {}
+			var initialToken = body.initial_token
 			// the server returns a malform payload. We should retry and hope it heal soon
 			if (!initialToken) return setTimeout(thethis.subscribe, 3000, events, cb)
 			// first time sub, should grab the initial token
@@ -107,7 +109,7 @@ function Conn (credential, onDead, onEvents) {
 // additional features compare to conn:
 //   + auto recreate and resub if the last conn is dead
 //   + don't subscribe already subscribed events
-function Realtime (credential) {
+function Realtime (credential, callAPI) {
 	credential = credential || {}
 
 	var stop = false
@@ -162,25 +164,27 @@ function Realtime (credential) {
 		conn = new Conn(
 			credential,
 			function () {
-				if (stop) return // outdated
+				if (stop) return
 				pubsub.emit('interrupted')
-				reconnect() // reconnect and resubscribe
+				setTimeout(reconnect, 1) // reconnect and resubscribe
 			},
 			function (events) {
+				if (stop) return
 				map(events, function (ev) {
 					pubsub.emit('event', ev)
 				})
 			},
+			callAPI,
 		)
 
 		// resubscribe all subscribed events
-		conn.subscribe(Object.keys(subscribedEvents))
+		conn.subscribe(Object.keys(subscribedEvents), function () {})
 	}
 	reconnect()
 }
 
 // xhrsend sends an HTTP request
-function xhrsend (method, url, body, header, cb) {
+function xhrsend (method, url, body, cb) {
 	var request = new window.XMLHttpRequest()
 	request.onreadystatechange = function (e) {
 		if (request.readyState !== 4) return
@@ -193,9 +197,7 @@ function xhrsend (method, url, body, header, cb) {
 	}
 
 	request.open(method, url)
-	map(header, function (v, k) {
-		request.setRequestHeader(k, v)
-	})
+	if (body) request.setRequestHeader('content-type', 'text/plain')
 	request.send(body)
 }
 
@@ -203,7 +205,7 @@ function xhrsend (method, url, body, header, cb) {
 // return undefined when parsing invalid JSON string
 function parseJSON (str) {
 	try {
-		return parseJSON(str)
+		return JSON.parse(str)
 	} catch (e) {}
 }
 
