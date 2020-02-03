@@ -21,7 +21,6 @@ test.skip('realtime simple', async t => {
 	var mask = 'acqcsmrppbftadjzxnvo@usqnkpwrkrszjgyfajemn@Iqz40aZ4dwQuvFn8kJA6gqKnyyQLFA0xU44Emw=='
 
 	var realtime = new Realtime({ user_mask: mask }, axiosCall)
-
 	var evid = '-'
 	realtime.onEvent(ev => {
 		if (ev.data.message.id === evid) {
@@ -106,8 +105,8 @@ test('realtime subs when server down and then backup', async t => {
 	t.equal(err, undefined)
 })
 
-
 test('realtime must stop if there is something wrong with our credential or our code', async t => {
+	var subcode
 	var callapi = makeMockServer([
 		async (method, url, body, cb) => {
 			// must first call sub and must attach user-mask in the query
@@ -115,37 +114,19 @@ test('realtime must stop if there is something wrong with our credential or our 
 			t.true(url.indexOf('/subs?') !== -1)
 			t.true(url.indexOf('user-mask=mask123') !== -1)
 			cb(`400 invalid mask`, 400)
-
-			// TODO: our proxy should return 500 on not found
-			TODO:shoud die here
-		},
-		async (method, url, body, cb) => {
-			// should retry
-			t.equal(method, 'post')
-			t.true(url.indexOf('/subs?') !== -1)
-			t.true(url.indexOf('user-mask=mask123') !== -1)
-			cb(`502 still busy`, 502)
-		},
-		async (method, url, body, cb) => {
-			// should retry
-			t.equal(method, 'post')
-			t.true(url.indexOf('/subs?') !== -1)
-			t.true(url.indexOf('user-mask=mask123') !== -1)
-			cb(`{"initial_token": "token0"}`, 200)
-		},
-		async (method, url, body, cb) => {
-			t.equal(method, 'get')
-			t.true(url.indexOf('/poll?') !== -1)
-			t.true(url.indexOf('token=token0') !== -1)
+			t.equal(subcode, 400)
 			realtime.stop()
-			cb(`{"events": [], "token": "-"}`, 200)
 			t.end()
 		},
 	])
 
 	var realtime = new Realtime({ user_mask: 'mask123' }, callapi)
+	realtime.onInterrupted((_, _1, code) => {
+		subcode = code
+	})
 	var err = await realtime.subscribe(['message_pong'])
-	t.equal(err, undefined)
+
+	t.false(err === undefined)
 })
 
 function sendMsg (userid, mask, text) {

@@ -44,7 +44,7 @@ function Conn (credential, onDead, onEvents, callAPI) {
 			if (code !== 200) {
 				// unretryable error, should kill
 				dead = true
-				return onDead()
+				return onDead('poll')
 			}
 
 			// 200, success
@@ -77,14 +77,11 @@ function Conn (credential, onDead, onEvents, callAPI) {
 
 			// unretryable error
 			if (code !== 200) {
-				// don't try to kill the connection just because we can't subscribe
-				if (initialized) return cb('cannot subscribe')
-
 				// we are unable to start the communication with realtime server.
 				// Must notify the user by killing the connection
 				dead = true
-				onDead()
-				return cb()
+				onDead('subscribe', body, code)
+				return cb('cannot subscribe')
 			}
 
 			// success
@@ -162,9 +159,9 @@ function Realtime (credential, callAPI) {
 		if (stop) return
 		conn = new Conn(
 			credential,
-			function () {
+			function (code, body, status) {
 				if (stop) return
-				pubsub.emit('interrupted')
+				pubsub.emit('interrupted', code, body, status)
 				setTimeout(reconnect, 1000) // reconnect and resubscribe after 1 sec
 			},
 			function (events) {
@@ -232,6 +229,7 @@ function Pubsub () {
 	// emit notifies any callback functions that previously
 	// subscribed to the topic (by the on function)
 	this.emit = function (topic) {
+		// skip the first item in arguments, which is the topic
 		var args = filter(arguments, function (_, i) {
 			return i > 0
 		})
@@ -267,7 +265,7 @@ function Pubsub () {
 // see https://en.wikipedia.org/wiki/Exponential_backoff
 function calcNextBackoff (attempts) {
 	var RECONNECT_INTERVAL = 1000
-	var MAX_RECONNECT_INTERVAL = 30000
+	var MAX_RECONNECT_INTERVAL = 10000
 	var RECONNECT_DECAY = 1.5
 
 	if (!attempts || attempts === -1) return 0 // first time connect
