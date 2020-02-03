@@ -72,7 +72,6 @@ function Conn (credential, onDead, onEvents, callAPI) {
 		else if (access_token) query += `&access-token=${access_token}`
 
 		callAPI('post', `${apiUrl}subs${query}`, JSON.stringify({ events }), function (body, code) {
-			console.log("HHHHHHH", body, code)
 			if (dead) return cb('dead')
 			if (retryable(code)) return setTimeout(thethis.subscribe, 3000, events, cb)
 
@@ -166,7 +165,7 @@ function Realtime (credential, callAPI) {
 			function () {
 				if (stop) return
 				pubsub.emit('interrupted')
-				setTimeout(reconnect, 1) // reconnect and resubscribe
+				setTimeout(reconnect, 1000) // reconnect and resubscribe after 1 sec
 			},
 			function (events) {
 				if (stop) return
@@ -310,7 +309,7 @@ function filter (arr, func) {
 // retryable decides whether we should resent the HTTP request
 // based on last response or network state
 function retryable (code) {
-	return code === 500 || code === -1 || code === 429
+	return (code >= 500 && code < 600) || code === -1 || code === 429
 }
 
 module.exports = Realtime

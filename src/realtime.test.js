@@ -46,17 +46,97 @@ test('realtime', async t => {
 			cb(`{"initial_token": "token0"}`, 200)
 		},
 		async (method, url, body, cb) => {
-			// start the poll and must attach user-mask in the query
+			// start the poll and must attach initial token  in the query
 			t.equal(method, 'get')
 			t.true(url.indexOf('/poll?') !== -1)
 			t.true(url.indexOf('token=token0') !== -1)
 			cb(`{"events": [], "sequential_token": "token1"}`, 200)
 		},
 		async (method, url, body, cb) => {
-			// start the poll and must attach user-mask in the query
+			// next poll must attach last received token
 			t.equal(method, 'get')
 			t.true(url.indexOf('/poll?') !== -1)
 			t.true(url.indexOf('token=token1') !== -1)
+			realtime.stop()
+			cb(`{"events": [], "token": "-"}`, 200)
+			t.end()
+		},
+	])
+
+	var realtime = new Realtime({ user_mask: 'mask123' }, callapi)
+	var err = await realtime.subscribe(['message_pong'])
+	t.equal(err, undefined)
+})
+
+test('realtime subs when server down and then backup', async t => {
+	var callapi = makeMockServer([
+		async (method, url, body, cb) => {
+			// must first call sub and must attach user-mask in the query
+			t.equal(method, 'post')
+			t.true(url.indexOf('/subs?') !== -1)
+			t.true(url.indexOf('user-mask=mask123') !== -1)
+			cb(`502 too busy`, 502)
+		},
+		async (method, url, body, cb) => {
+			// should retry
+			t.equal(method, 'post')
+			t.true(url.indexOf('/subs?') !== -1)
+			t.true(url.indexOf('user-mask=mask123') !== -1)
+			cb(`502 still busy`, 502)
+		},
+		async (method, url, body, cb) => {
+			// should retry
+			t.equal(method, 'post')
+			t.true(url.indexOf('/subs?') !== -1)
+			t.true(url.indexOf('user-mask=mask123') !== -1)
+			cb(`{"initial_token": "token0"}`, 200)
+		},
+		async (method, url, body, cb) => {
+			t.equal(method, 'get')
+			t.true(url.indexOf('/poll?') !== -1)
+			t.true(url.indexOf('token=token0') !== -1)
+			realtime.stop()
+			cb(`{"events": [], "token": "-"}`, 200)
+			t.end()
+		},
+	])
+
+	var realtime = new Realtime({ user_mask: 'mask123' }, callapi)
+	var err = await realtime.subscribe(['message_pong'])
+	t.equal(err, undefined)
+})
+
+
+test('realtime must stop if there is something wrong with our credential or our code', async t => {
+	var callapi = makeMockServer([
+		async (method, url, body, cb) => {
+			// must first call sub and must attach user-mask in the query
+			t.equal(method, 'post')
+			t.true(url.indexOf('/subs?') !== -1)
+			t.true(url.indexOf('user-mask=mask123') !== -1)
+			cb(`400 invalid mask`, 400)
+
+			// TODO: our proxy should return 500 on not found
+			TODO:shoud die here
+		},
+		async (method, url, body, cb) => {
+			// should retry
+			t.equal(method, 'post')
+			t.true(url.indexOf('/subs?') !== -1)
+			t.true(url.indexOf('user-mask=mask123') !== -1)
+			cb(`502 still busy`, 502)
+		},
+		async (method, url, body, cb) => {
+			// should retry
+			t.equal(method, 'post')
+			t.true(url.indexOf('/subs?') !== -1)
+			t.true(url.indexOf('user-mask=mask123') !== -1)
+			cb(`{"initial_token": "token0"}`, 200)
+		},
+		async (method, url, body, cb) => {
+			t.equal(method, 'get')
+			t.true(url.indexOf('/poll?') !== -1)
+			t.true(url.indexOf('token=token0') !== -1)
 			realtime.stop()
 			cb(`{"events": [], "token": "-"}`, 200)
 			t.end()
