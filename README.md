@@ -11,7 +11,11 @@ This library implements subiz long polling protocol
 ## Example
 ```
 var Realtime = require('@subiz/wsclient')
-var realtime = new Realtime({account_id: 'ac1234', getAccessToken:()=> '333344', user_mask: 'mask123'})
+var realtime = new Realtime('https://realtime-0.subiz.net/', {
+  account_id: 'ac1234',
+  getAccessToken:()=> '333344',
+  user_mask: 'mask123'
+})
 
 realtime.onEvent(ev => console.log(ev))
 realtime.onInterrupted(() => console.log('some message may have been losted'))
