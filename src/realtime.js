@@ -11,13 +11,11 @@
 //
 // Once dead, onDead will be called. After that, the connection is
 // useless, all resources will be released.
-function Conn (credential, onDead, onEvents, callAPI) {
+function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 	callAPI = callAPI || xhrsend // allow hook
 	credential = credential || {}
 	// tell if connection is dead
 	var dead = false
-
-	var apiUrl = 'https://realtime-0.subiz.net/'
 
 	// is long polling started?
 	var initialized = false
@@ -105,7 +103,7 @@ function Conn (credential, onDead, onEvents, callAPI) {
 // additional features compare to conn:
 //   + auto recreate and resub if the last conn is dead
 //   + don't subscribe already subscribed events
-function Realtime (credential, callAPI) {
+function Realtime (apiUrl, credential, callAPI) {
 	credential = credential || {}
 
 	var stop = false
@@ -158,6 +156,7 @@ function Realtime (credential, callAPI) {
 	var reconnect = function () {
 		if (stop) return
 		conn = new Conn(
+			apiUrl,
 			credential,
 			function (code, body, status) {
 				if (stop) return
@@ -185,6 +184,7 @@ function xhrsend (method, url, body, cb) {
 	request.onreadystatechange = function (e) {
 		if (request.readyState !== 4) return
 		cb && cb(request.responseText, request.status)
+		cb = undefined // dont call cb anymore
 	}
 
 	request.onerror = function () {
@@ -307,7 +307,9 @@ function filter (arr, func) {
 // retryable decides whether we should resent the HTTP request
 // based on last response or network state
 function retryable (code) {
-	return (code >= 500 && code < 600) || code === -1 || code === 429
+	// code = 0 means server return response without CORS header, so we are unable to read it
+	// code = -1 means the network connection is dead
+	return (code >= 500 && code < 600) || code === 0 || code === -1 || code === 429
 }
 
 module.exports = Realtime
