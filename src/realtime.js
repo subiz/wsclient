@@ -36,7 +36,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 	// the polling loop starts after the first subscribe call finished successfully
 	var polling = function (token, backoff) {
 		if (dead) return
-		callAPI('get', `${apiUrl}poll?token=${token}`, undefined, function (body, code) {
+		callAPI('get', apiUrl + 'poll?token=' + token, undefined, function (body, code) {
 			if (dead) return
 			if (retryable(code)) return setTimeout(polling, calcNextBackoff(backoff), token, backoff + 1)
 			if (code !== 200) {
@@ -62,37 +62,38 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 	this.subscribe = function (events, cb) {
 		if (dead) return cb('dead')
 		if (events.length <= 0) return cb()
-		var query = `?seek=${connectionSeek}`
+		var query = '?seek=' + connectionSeek
 
 		// prepare authorization
-		var access_token = credential.getAccessToken && credential.getAccessToken()
-		if (credential.user_mask) query += `&user-mask=${encodeURIComponent(credential.user_mask)}`
-		else if (access_token) query += `&access-token=${access_token}`
+		credential.getAccessToken().then(function (access_token) {
+			if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
+			else if (access_token) query += '&access-token=' + access_token
 
-		callAPI('post', `${apiUrl}subs${query}`, JSON.stringify({ events }), function (body, code) {
-			if (dead) return cb('dead')
-			if (retryable(code)) return setTimeout(thethis.subscribe, 3000, events, cb)
+			callAPI('post', apiUrl + 'subs' + query, JSON.stringify({ events }), function (body, code) {
+				if (dead) return cb('dead')
+				if (retryable(code)) return setTimeout(thethis.subscribe, 3000, events, cb)
 
-			// unretryable error
-			if (code !== 200) {
-				// we are unable to start the communication with realtime server.
-				// Must notify the user by killing the connection
-				dead = true
-				onDead('subscribe', body, code)
-				return cb('cannot subscribe')
-			}
+				// unretryable error
+				if (code !== 200) {
+					// we are unable to start the communication with realtime server.
+					// Must notify the user by killing the connection
+					dead = true
+					onDead('subscribe', body, code)
+					return cb('cannot subscribe')
+				}
 
-			// success
-			if (initialized) return cb()
-			initialized = true
+				// success
+				if (initialized) return cb()
+				initialized = true
 
-			body = parseJSON(body) || {}
-			var initialToken = body.initial_token
-			// the server returns a malform payload. We should retry and hope it heal soon
-			if (!initialToken) return setTimeout(thethis.subscribe, 3000, events, cb)
-			// first time sub, should grab the initial token
-			polling(initialToken, 0) // start the poll
-			cb()
+				body = parseJSON(body) || {}
+				var initialToken = body.initial_token
+				// the server returns a malform payload. We should retry and hope it heal soon
+				if (!initialToken) return setTimeout(thethis.subscribe, 3000, events, cb)
+				// first time sub, should grab the initial token
+				polling(initialToken, 0) // start the poll
+				cb()
+			})
 		})
 	}
 }
@@ -105,6 +106,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 //   + don't subscribe already subscribed events
 function Realtime (apiUrl, credential, callAPI) {
 	credential = credential || {}
+	credential.getAccessToken = credential.getAccessToken || Promise.resove('')
 
 	var stop = false
 
