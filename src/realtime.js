@@ -106,7 +106,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 //   + don't subscribe already subscribed events
 function Realtime (apiUrl, credential, callAPI) {
 	credential = credential || {}
-	credential.getAccessToken = credential.getAccessToken || Promise.resove('')
+	credential.getAccessToken = credential.getAccessToken || Promise.resolve('')
 
 	var stop = false
 
