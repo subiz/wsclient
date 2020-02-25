@@ -65,7 +65,8 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 		var query = '?seek=' + connectionSeek
 
 		// prepare authorization
-		credential.getAccessToken().then(function (access_token) {
+		let access_token = ''
+		// credential.getAccessToken().then(function (access_token) {
 			if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
 			else if (access_token) query += '&access-token=' + access_token
 
@@ -93,7 +94,6 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 				// first time sub, should grab the initial token
 				polling(initialToken, 0) // start the poll
 				cb()
-			})
 		})
 	}
 }
