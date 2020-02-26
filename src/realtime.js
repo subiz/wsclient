@@ -66,7 +66,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 
 		// prepare authorization
 		let access_token = ''
-		// credential.getAccessToken().then(function (access_token) {
+		credential.getAccessToken().then(function (access_token) {
 			if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
 			else if (access_token) query += '&access-token=' + access_token
 
@@ -94,6 +94,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 				// first time sub, should grab the initial token
 				polling(initialToken, 0) // start the poll
 				cb()
+			})
 		})
 	}
 }
@@ -106,7 +107,11 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 //   + don't subscribe already subscribed events
 function Realtime (apiUrl, credential, callAPI) {
 	credential = credential || {}
-	credential.getAccessToken = credential.getAccessToken || Promise.resolve('')
+	if (!credential.getAccessToken) {
+		credential.getAccessToken = function () {
+			return Promise.resolve('')
+		}
+	}
 
 	var stop = false
 
