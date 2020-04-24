@@ -1,6 +1,6 @@
 {
 	"name": "@subiz/wsclient",
-	"version": "2.0.7",
+	"version": "3.0.0",
 	"main": "index.js",
 	"scripts": {
 		"test": "node test/client_test.js",
@@ -16,9 +16,12 @@
 	"description": "",
 	"devDependencies": {
 		"axios": "^0.19.2",
-		"tape": "^4.13.0",
+		"tape": "^4.13.2",
 		"uglifyjs-webpack-plugin": "^2.2.0",
-		"webpack": "^4.41.6",
+		"webpack": "^4.43.0",
 		"webpack-cli": "^3.3.11"
+	},
+	"dependencies": {
+		"@subiz/flow": "^1.0.3"
 	}
 }
