@@ -1,5 +1,7 @@
+var flow = require('@subiz/flow')
+
 // Conn represents a realtime connection between an user and the realtime
-// server (https://realtime-0.subiz.com)
+// server (https://rt-0.subiz.com)
 //
 // You can subscribe for realtime events and it will sent you new events
 // as fast as possible through onEvents callback.
@@ -17,12 +19,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 	// tell if connection is dead
 	var dead = false
 
-	// is long polling started?
-	var initialized = false
-
-	// used to determind connection id
-	// server will see two Conns with the same connection seek as one
-	var connectionSeek = randomString()
+	var lastToken = ''
 
 	// kill force the connection to dead state
 	this.kill = function () {
@@ -34,11 +31,11 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 	// exponential backoff algorithm. Polling loop will terminate if it encounter an
 	// un-retryable error
 	// the polling loop starts after the first subscribe call finished successfully
-	var polling = function (token, backoff) {
+	var polling = function (backoff) {
 		if (dead) return
-		callAPI('get', apiUrl + 'poll?token=' + token, undefined, function (body, code) {
+		callAPI('get', apiUrl + 'poll?token=' + lastToken, undefined, function (body, code) {
 			if (dead) return
-			if (retryable(code)) return setTimeout(polling, calcNextBackoff(backoff), token, backoff + 1)
+			if (retryable(code)) return setTimeout(polling, calcNextBackoff(backoff), backoff + 1)
 			if (code !== 200) {
 				// unretryable error, should kill
 				dead = true
@@ -48,54 +45,67 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 			// 200, success
 			body = parseJSON(body)
 
-			var sequentialToken = body.sequential_token
+			var seqToken = body.sequential_token
 			// the server returns a malform payload. We should retry and hope it heal soon
-			if (!sequentialToken) return setTimeout(polling, calcNextBackoff(backoff), token, backoff + 1)
+			if (!seqToken) return setTimeout(polling, calcNextBackoff(backoff), backoff + 1)
+			lastToken = seqToken
 			onEvents(body.events || [])
-			return polling(sequentialToken, 0)
+			return polling(0)
 		})
 	}
 
-	// subscribe call /subs API to tell server that we are listening for those events
-	// this function may start polling loop if it hasn't been started yet
-	var thethis = this
-	this.subscribe = function (events, cb) {
-		if (dead) return cb('dead')
-		if (events.length <= 0) return cb()
-		var query = '?seek=' + connectionSeek
+	var subQueue = flow.batch(50, 100, function (events) {
+		if (dead) return ['dead']
+		if (events.length <= 0) return []
 
-		// prepare authorization
-		let access_token = ''
-		credential.getAccessToken().then(function (access_token) {
-			if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
-			else if (access_token) query += '&access-token=' + access_token
+		var out = []
+		return flow.loop(function () {
+			return new Promise(function (rs) {
+				var query = '?token=' + lastToken
+				credential.getAccessToken().then(function (access_token) {
+					if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
+					else if (access_token) query += '&access-token=' + access_token
 
-			callAPI('post', apiUrl + 'subs' + query, JSON.stringify({ events: events }), function (body, code) {
-				if (dead) return cb('dead')
-				if (retryable(code)) return setTimeout(thethis.subscribe, 3000, events, cb)
+					callAPI('post', apiUrl + 'subs' + query, JSON.stringify({ events: events }), function (body, code) {
+						if (dead) {
+							out = repeat('dead', events.length)
+							return rs(false) // break loop
+						}
 
-				// unretryable error
-				if (code !== 200) {
-					// we are unable to start the communication with realtime server.
-					// Must notify the user by killing the connection
-					dead = true
-					onDead('subscribe', body, code)
-					return cb('cannot subscribe')
-				}
+						if (retryable(code)) return setTimeout(rs, 3000, true)
+						// unretryable error
+						if (code !== 200) {
+							// we are unable to start the communication with realtime server.
+							// Must notify the user by killing the connection
+							dead = true
+							onDead('subscribe', body, code)
+							out = repeat('dead', events.length)
+							return rs(false)
+						}
 
-				// success
-				if (initialized) return cb()
-				initialized = true
+						if (lastToken) return
 
-				body = parseJSON(body) || {}
-				var initialToken = body.initial_token
-				// the server returns a malform payload. We should retry and hope it heal soon
-				if (!initialToken) return setTimeout(thethis.subscribe, 3000, events, cb)
-				// first time sub, should grab the initial token
-				polling(initialToken, 0) // start the poll
-				cb()
+						// first time sub, should grab the initial token
+						body = parseJSON(body) || {}
+						var initialToken = body.initial_token
+						// the server returns a malform payload. We should retry and hope it heal soon
+						if (!initialToken) return setTimeout(rs, 3000, true)
+
+						lastToken = initialToken
+						polling(0)
+						rs(false)
+					})
+				})
 			})
 		})
+	})
+
+	// subscribe call /subs API to tell server that we are listening for those events
+	// this function may start polling loop if it hasn't been started yet
+	// Note: this function is not design to be thread safed so, do not call this
+	// function multiple times at once
+	this.subscribe = function (event) {
+		return subQueue.push(event)
 	}
 }
 
@@ -114,7 +124,6 @@ function Realtime (apiUrl, credential, callAPI) {
 	}
 
 	var stop = false
-
 	var pubsub = new Pubsub()
 
 	// holds all subscribed event as its keys
@@ -124,10 +133,6 @@ function Realtime (apiUrl, credential, callAPI) {
 	this.stop = function () {
 		stop = true
 		if (conn) conn.kill()
-	}
-
-	this.un = function (subid) {
-		pubsub.un(subid)
 	}
 
 	this.onEvent = function (cb) {
@@ -140,21 +145,19 @@ function Realtime (apiUrl, credential, callAPI) {
 
 	var conn
 	this.subscribe = function (events) {
-		return new Promise(function (rs) {
-			if (stop) return rs()
+		if (stop) return Promise.resolve()
 
-			// ignore already subscribed events
-			var newEvs = filter(events, function (ev) {
-				return !subscribedEvents[ev]
-			})
-			if (newEvs.length === 0) return rs()
-			conn.subscribe(newEvs, function (err) {
-				if (err) return rs(err)
-				map(newEvs, function (ev) {
-					subscribedEvents[ev] = true
-				})
-				rs()
-			})
+		if (!Array.isArray(events)) return Promise.reject('param should be an array')
+
+		// ignore already subscribed events
+		var all = []
+		for (var i = 0; i < events.length; i++) {
+			if (!subscribedEvents[events[i]]) all.push(conn.subscribe(events[i]))
+		}
+		if (all.length === 0) return Promise.resolve()
+		return Promise.all(all).then(function (errs) {
+			for (var i = 0; i < errs.length; i++) if (errs[i]) return errs[i]
+			for (var i = 0; i < events.length; i++) subscribedEvents[events[i]] = true
 		})
 	}
 
@@ -168,16 +171,13 @@ function Realtime (apiUrl, credential, callAPI) {
 			function (code, body, status) {
 				if (stop) return
 				pubsub.emit('interrupted', code, body, status)
-				setTimeout(reconnect, 1000) // reconnect and resubscribe after 1 sec
+				setTimeout(reconnect, 2000) // reconnect and resubscribe after 2 sec
 			},
 			function (events) {
 				if (stop) return
-				map(events, function (ev) {
-					pubsub.emit('event', ev)
-				})
+				for (var i = 0; i < events.length; i++) pubsub.emit('event', events[i])
 			},
-			callAPI,
-		)
+			callAPI)
 
 		// resubscribe all subscribed events
 		conn.subscribe(Object.keys(subscribedEvents), function () {})
@@ -187,7 +187,7 @@ function Realtime (apiUrl, credential, callAPI) {
 
 // xhrsend sends an HTTP request
 function xhrsend (method, url, body, cb) {
-	var request = new window.XMLHttpRequest()
+	var request = new XMLHttpRequest()
 	request.onreadystatechange = function (e) {
 		if (request.readyState !== 4) return
 		cb && cb(request.responseText, request.status)
@@ -237,12 +237,11 @@ function Pubsub () {
 	// subscribed to the topic (by the on function)
 	this.emit = function (topic) {
 		// skip the first item in arguments, which is the topic
-		var args = filter(arguments, function (_, i) {
-			return i > 0
-		})
-		map(listeners[topic], function (cb) {
-			cb.apply(undefined, args)
-		})
+		var args = []
+		for (var i = 1; i < arguments.length; i++) args.push(arguments[i])
+
+		if (!listeners[topic]) return
+		for (var i = 0; i < listeners[topic].length; i++) listeners[topic][i].apply(undefined, args)
 	}
 
 	// register a callback function for a topic
@@ -251,18 +250,10 @@ function Pubsub () {
 	// this function returns a string represent the subscription
 	// user can use the string to unsubscribe
 	this.on = function (topic, cb) {
-		var subid = topic + DELI + randomString(20)
+		var subid = topic + DELI + randomString()
 		if (!listeners[topic]) listeners[topic] = {}
 		listeners[topic][subid] = cb
 		return subid
-	}
-
-	// remove a subscription
-	this.un = function (subid) {
-		if (!subid || !subid.split) return
-		var topic = subid.split(DELI)[0]
-		if (!listeners[topic]) return
-		delete listeners[topic][subid]
 	}
 }
 
@@ -280,43 +271,18 @@ function calcNextBackoff (attempts) {
 	return Math.min(MAX_RECONNECT_INTERVAL, delaytime)
 }
 
-// like lodash.map
-function map (collection, func) {
-	if (!collection) return []
-	if (!func) return collection
-
-	var out = []
-	if (Array.isArray(collection)) {
-		for (var i = 0; i < collection.length; i++) out.push(func(collection[i], i))
-		return out
-	}
-
-	if (typeof collection !== 'object') return []
-
-	// object
-	var keys = Object.keys(collection)
-	for (var i = 0; i < keys.length; i++) {
-		var key = keys[i]
-		out.push(func(collection[key], key))
-	}
-	return out
-}
-
-// like lodash.filter
-function filter (arr, func) {
-	var out = []
-	map(arr, function (v, i) {
-		if (func(v, i)) out.push(v)
-	})
-	return out
-}
-
 // retryable decides whether we should resent the HTTP request
 // based on last response or network state
 function retryable (code) {
 	// code = 0 means server return response without CORS header, so we are unable to read it
 	// code = -1 means the network connection is dead
 	return (code >= 500 && code < 600) || code === 0 || code === -1 || code === 429
+}
+
+function repeat (ele, n) {
+	var arr = []
+	for (var i = 0; i < n; i++) arr.push(ele)
+	return arr
 }
 
 module.exports = Realtime
