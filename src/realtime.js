@@ -44,6 +44,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 
 			// 200, success
 			body = parseJSON(body)
+			if (body.redirect_url) apiUrl = body.redirect_url
 
 			var seqToken = body.sequential_token
 			// the server returns a malform payload. We should retry and hope it heal soon
@@ -90,6 +91,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 						var initialToken = body.initial_token
 						// the server returns a malform payload. We should retry and hope it heal soon
 						if (!initialToken) return setTimeout(rs, 3000, true)
+						if (body.redirect_url) apiUrl = body.redirect_url
 
 						lastToken = initialToken
 						polling(0)
@@ -115,7 +117,8 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 // additional features compare to conn:
 //   + auto recreate and resub if the last conn is dead
 //   + don't subscribe already subscribed events
-function Realtime (apiUrl, credential, callAPI) {
+function Realtime (apiUrls, credential, callAPI) {
+	if (typeof apiUrls === 'string' || apiUrls instanceof String) apiUrls = [apiUrls]
 	credential = credential || {}
 	if (!credential.getAccessToken) {
 		credential.getAccessToken = function () {
@@ -123,16 +126,17 @@ function Realtime (apiUrl, credential, callAPI) {
 		}
 	}
 
-	var stop = false
 	var pubsub = new Pubsub()
 
 	// holds all subscribed event as its keys
 	var subscribedEvents = {}
 
 	// stop the connection
+	var stop = false
 	this.stop = function () {
+		if (stop) return
 		stop = true
-		if (conn) conn.kill()
+		conn.kill()
 	}
 
 	this.onEvent = function (cb) {
@@ -146,7 +150,6 @@ function Realtime (apiUrl, credential, callAPI) {
 	var conn
 	this.subscribe = function (events) {
 		if (stop) return Promise.resolve()
-
 		if (!Array.isArray(events)) return Promise.reject('param should be an array')
 
 		// ignore already subscribed events
@@ -161,12 +164,15 @@ function Realtime (apiUrl, credential, callAPI) {
 		})
 	}
 
-	// reconnect make sure there is alway a Conn running is the background
+	// reconnect make sure there is alway a Conn running in the background
 	// if the Conn is dead, it recreate a new one
+	var thethis = this
 	var reconnect = function () {
 		if (stop) return
+
+		var randomUrl = apiUrls[Math.floor(Math.random() * apiUrls.length)]
 		conn = new Conn(
-			apiUrl,
+			randomUrl,
 			credential,
 			function (code, body, status) {
 				if (stop) return
@@ -177,10 +183,11 @@ function Realtime (apiUrl, credential, callAPI) {
 				if (stop) return
 				for (var i = 0; i < events.length; i++) pubsub.emit('event', events[i])
 			},
-			callAPI)
+			callAPI,
+		)
 
 		// resubscribe all subscribed events
-		conn.subscribe(Object.keys(subscribedEvents), function () {})
+		thethis.subscribe(Object.keys(subscribedEvents))
 	}
 	reconnect()
 }
@@ -212,21 +219,11 @@ function parseJSON (str) {
 	} catch (e) {}
 }
 
-// randomString generates a 30 characters random string
-function randomString () {
-	var str = ''
-	for (var i = 0; i < 30; i++) {
-		var asciiKey = Math.floor(Math.random() * 25 + 97)
-		str += String.fromCharCode(asciiKey)
-	}
-	return str
-}
-
 function Pubsub () {
 	// holds all subscriptions for all topics
 	// example {
-	//   topic1: {sub1: cb1, sub2: cb2},
-	//   topic2: {sub3: cb3, sub4: cb4},
+	//   topic1: [cb1, cb2],
+	//   topic2: [cb3, cb4],
 	// }
 	var listeners = {}
 
@@ -240,20 +237,17 @@ function Pubsub () {
 		var args = []
 		for (var i = 1; i < arguments.length; i++) args.push(arguments[i])
 
-		if (!listeners[topic]) return
-		for (var i = 0; i < listeners[topic].length; i++) listeners[topic][i].apply(undefined, args)
+		var cbs = listeners[topic]
+		if (!cbs) return
+		for (var i = 0; i < cbs.length; i++) cbs[i].apply(undefined, args)
 	}
 
 	// register a callback function for a topic
 	// when something is sent to the topic (by the emit function),
 	// the callback function will be called
-	// this function returns a string represent the subscription
-	// user can use the string to unsubscribe
 	this.on = function (topic, cb) {
-		var subid = topic + DELI + randomString()
-		if (!listeners[topic]) listeners[topic] = {}
-		listeners[topic][subid] = cb
-		return subid
+		if (!listeners[topic]) listeners[topic] = []
+		listeners[topic].push(cb)
 	}
 }
 
