@@ -44,7 +44,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 
 			// 200, success
 			body = parseJSON(body)
-			if (body.redirect_url) apiUrl = body.redirect_url
+			if (body && body.redirect_url) apiUrl = body.redirect_url
 
 			var seqToken = body.sequential_token
 			// the server returns a malform payload. We should retry and hope it heal soon
@@ -91,7 +91,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 						var initialToken = body.initial_token
 						// the server returns a malform payload. We should retry and hope it heal soon
 						if (!initialToken) return setTimeout(rs, 3000, true)
-						if (body.redirect_url) apiUrl = body.redirect_url
+						if (body && body.redirect_url) apiUrl = body.redirect_url
 
 						lastToken = initialToken
 						polling(0)
@@ -183,8 +183,7 @@ function Realtime (apiUrls, credential, callAPI) {
 				if (stop) return
 				for (var i = 0; i < events.length; i++) pubsub.emit('event', events[i])
 			},
-			callAPI,
-		)
+			callAPI)
 
 		// resubscribe all subscribed events
 		thethis.subscribe(Object.keys(subscribedEvents))
