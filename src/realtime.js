@@ -99,6 +99,8 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 					})
 				})
 			})
+		}).then(function () {
+			return out
 		})
 	})
 
@@ -166,7 +168,6 @@ function Realtime (apiUrls, credential, callAPI) {
 
 	// reconnect make sure there is alway a Conn running in the background
 	// if the Conn is dead, it recreate a new one
-	var thethis = this
 	var reconnect = function () {
 		if (stop) return
 
@@ -186,7 +187,8 @@ function Realtime (apiUrls, credential, callAPI) {
 			callAPI)
 
 		// resubscribe all subscribed events
-		thethis.subscribe(Object.keys(subscribedEvents))
+		var events = Object.keys(subscribedEvents)
+		for (var i = 0; i < events.length; i++) conn.subscribe(events[i])
 	}
 	reconnect()
 }
