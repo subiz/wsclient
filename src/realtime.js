@@ -84,7 +84,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 							return rs(false)
 						}
 
-						if (lastToken) return
+						if (lastToken) return rs(false)
 
 						// first time sub, should grab the initial token
 						body = parseJSON(body) || {}
@@ -95,7 +95,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 
 						lastToken = initialToken
 						polling(0)
-						rs(false)
+						return rs(false)
 					})
 				})
 			})
