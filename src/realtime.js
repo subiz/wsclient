@@ -44,7 +44,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 
 			// 200, success
 			body = parseJSON(body) || {}
-			if (body.host) apiUrl = body.host
+			if (body.host) apiUrl = absUrl(body.host)
 
 			var seqToken = body.sequential_token
 			// the server returns a malform payload. We should retry and hope it heal soon
@@ -91,7 +91,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 						var initialToken = body.initial_token
 						// the server returns a malform payload. We should retry and hope it heal soon
 						if (!initialToken) return setTimeout(rs, 3000, true)
-						if (body.host) apiUrl = body.host
+						if (body.host) apiUrl = absUrl(body.host)
 
 						lastToken = initialToken
 						polling(0)
@@ -278,6 +278,12 @@ function repeat (ele, n) {
 	var arr = []
 	for (var i = 0; i < n; i++) arr.push(ele)
 	return arr
+}
+
+function absUrl (url) {
+	url = url || ''
+	if (url.startsWith('//')) return 'https:' + url
+	return url
 }
 
 module.exports = Realtime
