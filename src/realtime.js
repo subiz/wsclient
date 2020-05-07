@@ -130,8 +130,8 @@ function Realtime (apiUrls, credential, callAPI) {
 
 	var pubsub = new Pubsub()
 
-	// holds all subscribed event as its keys
-	var subscribedEvents = {}
+	// holds all topics that realtime must subscribed
+	var topics = {}
 
 	// stop the connection
 	var stop = false
@@ -149,20 +149,25 @@ function Realtime (apiUrls, credential, callAPI) {
 		return pubsub.on('interrupted', cb)
 	}
 
+	this.isSub = function (topic) {
+		return this.topics[topic] || false
+	}
+
 	var conn
 	this.subscribe = function (events) {
 		if (stop) return Promise.resolve()
-		if (!Array.isArray(events)) return Promise.reject('param should be an array')
+		if (typeof (events) === 'string') events = [events]
+		if (!Array.isArray(events)) return Promise.reject(new Error('param should be an array'))
 
 		// ignore already subscribed events
 		var all = []
 		for (var i = 0; i < events.length; i++) {
-			if (!subscribedEvents[events[i]]) all.push(conn.subscribe(events[i]))
+			if (!topics[events[i]]) all.push(conn.subscribe(events[i]))
 		}
 		if (all.length === 0) return Promise.resolve()
 		return Promise.all(all).then(function (errs) {
 			for (var i = 0; i < errs.length; i++) if (errs[i]) return errs[i]
-			for (var i = 0; i < events.length; i++) subscribedEvents[events[i]] = true
+			for (var i = 0; i < events.length; i++) topics[events[i]] = true
 		})
 	}
 
@@ -170,6 +175,9 @@ function Realtime (apiUrls, credential, callAPI) {
 	// if the Conn is dead, it recreate a new one
 	var reconnect = function () {
 		if (stop) return
+		// reset subscribed topic
+		var allTopics = Object.keys(topics)
+		for (var i = 0; i < allTopics.length; i++) topics[allTopics[i]] = false
 
 		var randomUrl = apiUrls[Math.floor(Math.random() * apiUrls.length)]
 		conn = new Conn(
@@ -180,15 +188,15 @@ function Realtime (apiUrls, credential, callAPI) {
 				pubsub.emit('interrupted', code, body, status)
 				setTimeout(reconnect, 2000) // reconnect and resubscribe after 2 sec
 			},
-			function (events) {
+			function (topics) {
 				if (stop) return
-				for (var i = 0; i < events.length; i++) pubsub.emit('event', events[i])
+				for (var i = 0; i < topics.length; i++) pubsub.emit('event', topics[i])
 			},
 			callAPI)
 
 		// resubscribe all subscribed events
-		var events = Object.keys(subscribedEvents)
-		for (var i = 0; i < events.length; i++) conn.subscribe(events[i])
+		var topicKeys = Object.keys(topics)
+		for (var i = 0; i < topicKeys.length; i++) conn.subscribe(topicKeys[i])
 	}
 	reconnect()
 }
@@ -227,9 +235,6 @@ function Pubsub () {
 	//   topic2: [cb3, cb4],
 	// }
 	var listeners = {}
-
-	// delimiter, used to generate topic. Topic = <topic><DELI><randomstr>
-	var DELI = '-[/]-'
 
 	// emit notifies any callback functions that previously
 	// subscribed to the topic (by the on function)
