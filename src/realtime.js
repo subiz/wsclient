@@ -108,9 +108,7 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 	// this function may start polling loop if it hasn't been started yet
 	// Note: this function is not design to be thread safed so, do not call this
 	// function multiple times at once
-	this.subscribe = function (event) {
-		return subQueue.push(event)
-	}
+	this.subscribe = subQueue.push.bind(subQueue)
 }
 
 // Realtime is just a stronger Conn.
@@ -131,6 +129,11 @@ function Realtime (apiUrls, credential, callAPI) {
 	var pubsub = new Pubsub()
 
 	// holds all topics that realtime must subscribed
+	// {
+	//   a: 'online',
+	//   b: 'offline',
+	//   c: 'connecting',
+	// }
 	var topics = {}
 
 	// stop the connection
@@ -149,23 +152,20 @@ function Realtime (apiUrls, credential, callAPI) {
 		return pubsub.on('interrupted', cb)
 	}
 
-	this.isSub = function (topic) {
-		return topics[topic] || false
-	}
-
 	var conn
 	this.subscribe = function (events) {
-		if (stop) return Promise.resolve()
+		if (stop) return Promise.resolve({})
 		if (typeof events === 'string') events = [events]
-		if (!Array.isArray(events)) return Promise.reject(new Error('param should be an array'))
+		if (!Array.isArray(events)) return Promise.resolve({ error: 'param should be an array or string' })
 
 		// ignore already subscribed events
 		var all = []
 		for (var i = 0; i < events.length; i++) {
-			if (!events[i]) continue
-			if (!topics[events[i]]) all.push(conn.subscribe(events[i]))
+			var topic = events[i]
+			if (!topic) continue
+			if (topics[topic] !== 'online') all.push(conn.subscribe(topic))
 		}
-		if (all.length === 0) return Promise.resolve()
+		if (all.length === 0) return Promise.resolve({})
 		return Promise.all(all).then(function (errs) {
 			for (var i = 0; i < errs.length; i++) if (errs[i]) return { error: errs[i] }
 			for (var j = 0; j < events.length; j++) topics[events[j]] = true
