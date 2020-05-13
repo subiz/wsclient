@@ -1,1 +1,1 @@
-module.exports = require('./src/realtime.js')
+module.exports = require('./realtime.js')

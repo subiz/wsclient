@@ -1,25 +1,21 @@
 {
 	"name": "@subiz/wsclient",
-	"version": "3.0.10",
+	"version": "3.1.0",
 	"main": "index.js",
 	"scripts": {
-		"test": "node test/client_test.js",
-		"build": "npx webpack"
+		"test": "node realtime.test.js"
 	},
 	"repository": {
 		"type": "git",
 		"url": "https://github.com/subiz/wsclient.git"
 	},
-	"author": "Hung Nguyen <hungnguyen@vietnambiz.com>",
+	"author": "Thanh Pham <thanhpham@vietnambiz.com>",
 	"license": "MIT",
 	"homepage": "https://github.com/subiz/wsclient#readme",
 	"description": "",
 	"devDependencies": {
 		"axios": "^0.19.2",
-		"tape": "^5.0.0",
-		"uglifyjs-webpack-plugin": "^2.2.0",
-		"webpack": "^4.43.0",
-		"webpack-cli": "^3.3.11"
+		"tape": "^5.0.0"
 	},
 	"dependencies": {
 		"@subiz/flow": "^1.0.3"
