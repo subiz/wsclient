@@ -1,6 +1,6 @@
 {
 	"name": "@subiz/wsclient",
-	"version": "3.0.8",
+	"version": "3.0.9",
 	"main": "index.js",
 	"scripts": {
 		"test": "node test/client_test.js",

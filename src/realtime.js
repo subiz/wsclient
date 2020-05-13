@@ -150,24 +150,26 @@ function Realtime (apiUrls, credential, callAPI) {
 	}
 
 	this.isSub = function (topic) {
-		return this.topics[topic] || false
+		return topics[topic] || false
 	}
 
 	var conn
 	this.subscribe = function (events) {
 		if (stop) return Promise.resolve()
-		if (typeof (events) === 'string') events = [events]
+		if (typeof events === 'string') events = [events]
 		if (!Array.isArray(events)) return Promise.reject(new Error('param should be an array'))
 
 		// ignore already subscribed events
 		var all = []
 		for (var i = 0; i < events.length; i++) {
+			if (!events[i]) continue
 			if (!topics[events[i]]) all.push(conn.subscribe(events[i]))
 		}
 		if (all.length === 0) return Promise.resolve()
 		return Promise.all(all).then(function (errs) {
-			for (var i = 0; i < errs.length; i++) if (errs[i]) return errs[i]
-			for (var i = 0; i < events.length; i++) topics[events[i]] = true
+			for (var i = 0; i < errs.length; i++) if (errs[i]) return { error: errs[i] }
+			for (var j = 0; j < events.length; j++) topics[events[j]] = true
+			return {}
 		})
 	}
 
