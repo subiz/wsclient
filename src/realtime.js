@@ -60,48 +60,50 @@ function Conn (apiUrl, credential, onDead, onEvents, callAPI) {
 		if (events.length <= 0) return []
 
 		var out = []
-		return flow.loop(function () {
-			return new Promise(function (rs) {
-				var query = '?token=' + lastToken
-				credential.getAccessToken().then(function (access_token) {
-					if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
-					else if (access_token) query += '&access-token=' + access_token
+		return flow.
+			loop(function () {
+				return new Promise(function (rs) {
+					var query = '?token=' + lastToken
+					credential.getAccessToken().then(function (access_token) {
+						if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
+						else if (access_token) query += '&access-token=' + access_token
 
-					callAPI('post', apiUrl + 'subs' + query, JSON.stringify({ events: events }), function (body, code) {
-						if (dead) {
-							out = repeat('dead', events.length)
-							return rs(false) // break loop
-						}
+						callAPI('post', apiUrl + 'subs' + query, JSON.stringify({ events: events }), function (body, code) {
+							if (dead) {
+								out = repeat('dead', events.length)
+								return rs(false) // break loop
+							}
 
-						if (retryable(code)) return setTimeout(rs, 3000, true)
-						// unretryable error
-						if (code !== 200) {
-							// we are unable to start the communication with realtime server.
-							// Must notify the user by killing the connection
-							dead = true
-							onDead('subscribe', body, code)
-							out = repeat('dead', events.length)
+							if (retryable(code)) return setTimeout(rs, 3000, true)
+							// unretryable error
+							if (code !== 200) {
+								// we are unable to start the communication with realtime server.
+								// Must notify the user by killing the connection
+								dead = true
+								onDead('subscribe', body, code)
+								out = repeat('dead', events.length)
+								return rs(false)
+							}
+
+							if (lastToken) return rs(false)
+
+							// first time sub, should grab the initial token
+							body = parseJSON(body) || {}
+							var initialToken = body.initial_token
+							// the server returns a malform payload. We should retry and hope it heal soon
+							if (!initialToken) return setTimeout(rs, 3000, true)
+							if (body.host) apiUrl = absUrl(body.host)
+
+							lastToken = initialToken
+							polling(0)
 							return rs(false)
-						}
-
-						if (lastToken) return rs(false)
-
-						// first time sub, should grab the initial token
-						body = parseJSON(body) || {}
-						var initialToken = body.initial_token
-						// the server returns a malform payload. We should retry and hope it heal soon
-						if (!initialToken) return setTimeout(rs, 3000, true)
-						if (body.host) apiUrl = absUrl(body.host)
-
-						lastToken = initialToken
-						polling(0)
-						return rs(false)
+						})
 					})
 				})
+			}).
+			then(function () {
+				return out
 			})
-		}).then(function () {
-			return out
-		})
 	})
 
 	// subscribe call /subs API to tell server that we are listening for those events
@@ -194,7 +196,8 @@ function Realtime (apiUrls, credential, callAPI) {
 				if (stop) return
 				for (var i = 0; i < topics.length; i++) pubsub.emit('event', topics[i])
 			},
-			callAPI)
+			callAPI,
+		)
 
 		// resubscribe all subscribed events
 		var topicKeys = Object.keys(topics)
