@@ -165,7 +165,7 @@ function Realtime (apiUrls, credential, callAPI) {
 		for (var i = 0; i < events.length; i++) {
 			var topic = events[i]
 			if (!topic) continue
-			if (topics[topic] !== 'online') all.push(conn.subscribe(topic))
+			if (!topics[topic]) all.push(conn.subscribe(topic))
 		}
 		if (all.length === 0) return Promise.resolve({})
 		return Promise.all(all).then(function (errs) {

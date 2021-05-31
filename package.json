@@ -1,6 +1,6 @@
 {
 	"name": "@subiz/wsclient",
-	"version": "3.1.1",
+	"version": "3.1.2",
 	"main": "index.js",
 	"scripts": {
 		"test": "node realtime.test.js"
@@ -14,8 +14,8 @@
 	"homepage": "https://github.com/subiz/wsclient#readme",
 	"description": "",
 	"devDependencies": {
-		"axios": "^0.21.0",
-		"tape": "^5.0.1"
+		"axios": "^0.21.1",
+		"tape": "^5.2.2"
 	},
 	"dependencies": {
 		"@subiz/flow": "^1.0.7"
