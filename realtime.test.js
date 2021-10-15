@@ -1,8 +1,7 @@
 var test = require('tape')
-const axios = require('axios')
 var Realtime = require('./realtime.js')
 
-function makeMockServer (script) {
+function makeMockServer(script) {
 	var i = -1
 	return (method, url, body, cb) => {
 		i++
@@ -10,32 +9,7 @@ function makeMockServer (script) {
 	}
 }
 
-function axiosCall (method, url, body, cb) {
-	method = method.toLowerCase()
-	return axios[method](url, body).then(resp => cb(resp.rawData, resp.statusCode))
-}
-
-test.skip('realtime simple', async t => {
-	// var accid = 'acqcsmrppbftadjzxnvo'
-	var userid = 'usqnkpwrkrszjgyfajemn'
-	var mask = 'acqcsmrppbftadjzxnvo@usqnkpwrkrszjgyfajemn@Iqz40aZ4dwQuvFn8kJA6gqKnyyQLFA0xU44Emw=='
-
-	var realtime = new Realtime({ user_mask: mask }, axiosCall)
-	var evid = '-'
-	realtime.onEvent(ev => {
-		if (ev.data.message.id === evid) {
-			realtime.stop()
-			t.end()
-		}
-	})
-	realtime.onInterrupted(() => {})
-	var err = await realtime.subscribe(['message_pong.account.acqcsmrppbftadjzxnvo.user.usqnkpwrkrszjgyfajemn'])
-	t.equal(err, undefined)
-	var res = await sendMsg(userid, mask)
-	evid = res.data.id
-})
-
-test('realtime', async t => {
+test('realtime', async (t) => {
 	var callapi = makeMockServer([
 		async (method, url, body, cb) => {
 			// must first call sub and must attach user-mask in the query
@@ -58,16 +32,15 @@ test('realtime', async t => {
 			t.true(url.indexOf('token=token1') !== -1)
 			realtime.stop()
 			cb(`{"events": [], "token": "-"}`, 200)
-			t.end()
 		},
 	])
 
-	var realtime = new Realtime('', { user_mask: 'mask123' }, callapi)
+	var realtime = new Realtime('', {user_mask: 'mask123'}, callapi)
 	var err = await realtime.subscribe(['message_pong'])
-	t.equal(err, undefined)
+	t.true(Object.keys(err).length === 0)
 })
 
-test('realtime subs when server down and then backup', async t => {
+test('realtime subs when server down and then backup', async (t) => {
 	var callapi = makeMockServer([
 		async (method, url, body, cb) => {
 			// must first call sub and must attach user-mask in the query
@@ -96,16 +69,15 @@ test('realtime subs when server down and then backup', async t => {
 			t.true(url.indexOf('token=token0') !== -1)
 			realtime.stop()
 			cb(`{"events": [], "token": "-"}`, 200)
-			t.end()
 		},
 	])
 
-	var realtime = new Realtime('', { user_mask: 'mask123' }, callapi)
+	var realtime = new Realtime('', {user_mask: 'mask123'}, callapi)
 	var err = await realtime.subscribe(['message_pong'])
-	t.equal(err, undefined)
+	t.true(Object.keys(err).length === 0)
 })
 
-test('realtime must stop if there is something wrong with our credential or our code', async t => {
+test('realtime must stop if there is something wrong with our credential or our code', async (t) => {
 	var subcode
 	var callapi = makeMockServer([
 		async (method, url, bkody, cb) => {
@@ -115,27 +87,13 @@ test('realtime must stop if there is something wrong with our credential or our 
 			t.true(url.indexOf('user-mask=mask123') !== -1)
 			cb(`400 invalid mask`, 400)
 			realtime.stop()
-			t.end()
 		},
 	])
 
-	var realtime = new Realtime('', { user_mask: 'mask123' }, callapi)
+	var realtime = new Realtime('', {user_mask: 'mask123'}, callapi)
 	realtime.onInterrupted((_, _1, code) => {
 		subcode = code
 	})
 	var err = await realtime.subscribe(['message_pong'])
-	t.false(err === undefined)
+	t.false(Object.keys(err).length === 0)
 })
-
-function sendMsg (userid, mask, text) {
-	if (!text) text = 'hello'
-	var ev = {
-		by: { id: userid, type: 'user' },
-		data: { message: { text, format: 'plaintext' } },
-		type: 'message_sent',
-	}
-
-	mask = encodeURIComponent(mask)
-	var convoid = 'csqohilsfssnkrhnli'
-	return axios.post(`https://api.subiz.net/4.0/conversations/${convoid}/messages?x-user-mask=${mask}`, ev)
-}
