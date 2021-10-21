@@ -219,7 +219,7 @@ var dofetch = function(method, url, body, cb) {
 }
 // xhrsend sends an HTTP request
 var xhrsend = function(method, url, body, cb) {
-	if (!XMLHttpRequest) return dofetch(method, url, body, cb)
+	if (typeof XMLHttpRequest === 'undefined') return dofetch(method, url, body, cb)
 	var request = new XMLHttpRequest()
 	request.onreadystatechange = function(e) {
 		if (request.readyState !== 4) return
