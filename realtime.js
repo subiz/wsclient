@@ -65,7 +65,8 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI) {
 				return new Promise(function(rs) {
 					var query = '?token=' + lastToken
 					credential.getAccessToken().then(function(access_token) {
-						if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
+						if (credential.user_ref) query += '&user-ref=' + encodeURIComponent(credential.user_ref)
+						else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
 						else if (access_token) query += '&access-token=' + access_token
 
 						callAPI('post', apiUrl + 'subs' + query, JSON.stringify({events: events}), function(body, code) {
