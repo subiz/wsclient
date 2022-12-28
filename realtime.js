@@ -22,7 +22,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI) {
 	var lastToken = ''
 
 	// kill force the connection to dead state
-	this.kill = function() {
+	this.kill = function () {
 		dead = true
 	}
 
@@ -31,9 +31,9 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI) {
 	// exponential backoff algorithm. Polling loop will terminate if it encounter an
 	// un-retryable error
 	// the polling loop starts after the first subscribe call finished successfully
-	var polling = function(backoff) {
+	var polling = function (backoff) {
 		if (dead) return
-		callAPI('get', apiUrl + 'poll?token=' + lastToken, undefined, function(body, code) {
+		callAPI('get', apiUrl + 'poll?token=' + lastToken, undefined, function (body, code) {
 			if (dead) return
 			if (retryable(code)) return setTimeout(polling, calcNextBackoff(backoff), backoff + 1)
 			if (code !== 200) {
@@ -55,21 +55,26 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI) {
 		})
 	}
 
-	var subQueue = flow.batch(50, 100, function(events) {
+	var subQueue = flow.batch(50, 100, function (events) {
 		if (dead) return ['dead']
 		if (events.length <= 0) return []
 
 		var out = []
 		return flow
-			.loop(function() {
-				return new Promise(function(rs) {
+			.loop(function () {
+				return new Promise(function (rs) {
 					var query = '?token=' + lastToken
-					credential.getAccessToken().then(function(access_token) {
-						if (credential.user_ref) query += '&user-ref=' + encodeURIComponent(credential.user_ref)
+					credential.getAccessToken().then(function (access_token) {
+						if (credential.user_ref)
+							query +=
+								'&user_ref=' +
+								encodeURIComponent(credential.user_ref) +
+								'&account_id=' +
+								encodeURIComponent(credential.account_id)
 						else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
 						else if (access_token) query += '&access-token=' + access_token
 
-						callAPI('post', apiUrl + 'subs' + query, JSON.stringify({events: events}), function(body, code) {
+						callAPI('post', apiUrl + 'subs' + query, JSON.stringify({events: events}), function (body, code) {
 							if (dead) {
 								out = repeat('dead', events.length)
 								return rs(false) // break loop
@@ -102,7 +107,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI) {
 					})
 				})
 			})
-			.then(function() {
+			.then(function () {
 				return out
 			})
 	})
@@ -124,7 +129,7 @@ function Realtime(apiUrls, credential, callAPI) {
 	if (typeof apiUrls === 'string' || apiUrls instanceof String) apiUrls = [apiUrls]
 	credential = credential || {}
 	if (!credential.getAccessToken) {
-		credential.getAccessToken = function() {
+		credential.getAccessToken = function () {
 			return Promise.resolve('')
 		}
 	}
@@ -141,22 +146,22 @@ function Realtime(apiUrls, credential, callAPI) {
 
 	// stop the connection
 	var stop = false
-	this.stop = function() {
+	this.stop = function () {
 		if (stop) return
 		stop = true
 		conn.kill()
 	}
 
-	this.onEvent = function(cb) {
+	this.onEvent = function (cb) {
 		return pubsub.on('event', cb)
 	}
 
-	this.onInterrupted = function(cb) {
+	this.onInterrupted = function (cb) {
 		return pubsub.on('interrupted', cb)
 	}
 
 	var conn
-	this.subscribe = function(events) {
+	this.subscribe = function (events) {
 		if (stop) return Promise.resolve({})
 		if (typeof events === 'string') events = [events]
 		if (!Array.isArray(events)) return Promise.resolve({error: 'param should be an array or string'})
@@ -169,7 +174,7 @@ function Realtime(apiUrls, credential, callAPI) {
 			if (!topics[topic]) all.push(conn.subscribe(topic))
 		}
 		if (all.length === 0) return Promise.resolve({})
-		return Promise.all(all).then(function(errs) {
+		return Promise.all(all).then(function (errs) {
 			for (var i = 0; i < errs.length; i++) if (errs[i]) return {error: errs[i]}
 			for (var j = 0; j < events.length; j++) topics[events[j]] = true
 			return {}
@@ -178,7 +183,7 @@ function Realtime(apiUrls, credential, callAPI) {
 
 	// reconnect make sure there is alway a Conn running in the background
 	// if the Conn is dead, it recreate a new one
-	var reconnect = function() {
+	var reconnect = function () {
 		if (stop) return
 		// reset subscribed topic
 		var allTopics = Object.keys(topics)
@@ -188,12 +193,12 @@ function Realtime(apiUrls, credential, callAPI) {
 		conn = new Conn(
 			randomUrl,
 			credential,
-			function(code, body, status) {
+			function (code, body, status) {
 				if (stop) return
 				pubsub.emit('interrupted', code, body, status)
 				setTimeout(reconnect, 2000) // reconnect and resubscribe after 2 sec
 			},
-			function(topics) {
+			function (topics) {
 				if (stop) return
 				for (var i = 0; i < topics.length; i++) pubsub.emit('event', topics[i])
 			},
@@ -207,7 +212,7 @@ function Realtime(apiUrls, credential, callAPI) {
 	reconnect()
 }
 
-var dofetch = function(method, url, body, cb) {
+var dofetch = function (method, url, body, cb) {
 	let headers = {}
 	if (body) headers['content-type'] = 'text/plain'
 	fetch(url, {
@@ -219,16 +224,16 @@ var dofetch = function(method, url, body, cb) {
 		.catch((err) => cb && cb(err, -1))
 }
 // xhrsend sends an HTTP request
-var xhrsend = function(method, url, body, cb) {
+var xhrsend = function (method, url, body, cb) {
 	if (typeof XMLHttpRequest === 'undefined') return dofetch(method, url, body, cb)
 	var request = new XMLHttpRequest()
-	request.onreadystatechange = function(e) {
+	request.onreadystatechange = function (e) {
 		if (request.readyState !== 4) return
 		cb && cb(request.responseText, request.status)
 		cb = undefined // dont call cb anymore
 	}
 
-	request.onerror = function() {
+	request.onerror = function () {
 		cb && cb(request.responseText, -1) // network error
 		cb = undefined // dont call cb anymore
 	}
@@ -256,7 +261,7 @@ function Pubsub() {
 
 	// emit notifies any callback functions that previously
 	// subscribed to the topic (by the on function)
-	this.emit = function(topic) {
+	this.emit = function (topic) {
 		// skip the first item in arguments, which is the topic
 		var args = []
 		for (var i = 1; i < arguments.length; i++) args.push(arguments[i])
@@ -269,7 +274,7 @@ function Pubsub() {
 	// register a callback function for a topic
 	// when something is sent to the topic (by the emit function),
 	// the callback function will be called
-	this.on = function(topic, cb) {
+	this.on = function (topic, cb) {
 		if (!listeners[topic]) listeners[topic] = []
 		listeners[topic].push(cb)
 	}
