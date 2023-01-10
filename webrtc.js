@@ -1,0 +1,302 @@
+var flow = require('@subiz/flow')
+var {xhrsend} = require('./common.js')
+const servers = {
+	iceServers: [{urls: ['stun:stun.l.google.com:19302?transport=tcp']}],
+}
+
+// import {RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, mediaDevices} from 'react-native-webrtc'
+// let connId = 'webrtc' + sb.randomString(20)
+// env = {RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, setTimeout, setInterval, jsonify, parseJSON}
+// setting env._is_webrtc_local to true for local testing
+function WebRTCConn(options) {
+	let {apiUrl, access_token, accid, agid, connId, realtime, callAPI, env, onTrack, onEvent} = options
+	if (!apiUrl) {
+		apiUrl = 'https://callcenter.subiz.com.vn/wc/'
+		if (env._is_webrtc_local) apiUrl = 'http://localhost:8008/'
+	}
+
+	callAPI = callAPI || xhrsend // allow hook
+
+	let parseJSON = (str) => {
+		try {
+			return env.JSON.parse(str)
+		} catch (e) {}
+	}
+	let jsonify = (str) => {
+		try {
+			return env.JSON.stringify(str)
+		} catch (e) {}
+	}
+	let currentStream
+	let pendingStream
+	let activeCalls = {}
+
+	let subscribe = realtime.subscribe([
+		`webrtc.account.${accid}.agent.${agid}`,
+		`webrtc.account.${accid}.agent.${agid}.webrtc_connection.${connId}`,
+	])
+
+	let peer
+	// makeSure only returns when stream is added and negotiation is finished
+	// its safe to call this function multiple times at once
+	let makeSure = (cb) => {
+		initConnection()
+		subscribe.then(cb)
+	}
+
+	let checkIceConnected = (cb) =>
+		flow.loop(
+			() =>
+				new env.Promise((rs) => {
+					let pass = peer && (peer.iceConnectionState == 'connected' || peer.iceConnectionState == 'completed')
+					if (!pass) return env.setTimeout((_) => rs(true), 100) // keep looping ultil connected
+					cb && cb()
+					rs(false)
+				}),
+		)
+
+	let readyToSendCandidateResolve
+	let readyToSendCandidate = new env.Promise((rs) => (readyToSendCandidateResolve = rs))
+
+	let initConnection = () => {
+		let needConnect =
+			!peer ||
+			peer.connectionState === 'disconnected' ||
+			peer.connectionState === 'closed' ||
+			peer.connectionState === 'failed'
+
+		if (!needConnect) return
+		peer = new env.RTCPeerConnection(servers)
+		let mypeer = peer
+		window.peer = peer
+
+		readyToSendCandidate = new env.Promise((rs) => (readyToSendCandidateResolve = rs))
+
+		peer.ontrack = (event) => {
+			if (peer != mypeer) return // outdated
+			onTrack && onTrack(event)
+		}
+
+		peer.onicecandidate = (event) => {
+			if (!event.candidate) return
+			if (peer != mypeer) return // outdated
+			let url = `${apiUrl}ice-candidates?x-access-token=${access_token}&connection_id=${connId}`
+			callAPI('post', url, jsonify(event.candidate))
+		}
+
+		peer.onnegotiationneeded = (ev) => console.log('NNNEED RE-NEGOTIATION', ev)
+		console.log('NEW PERR')
+	}
+
+	let stopMic = () => {
+		console.log('00000000STOP TRACK', currentStream)
+		return
+		currentStream &&
+			currentStream.getTracks().forEach((track) => {
+				track.enabled = false
+			})
+	}
+
+	// auto tear down when byte received is zero
+	// use to clear peer when there's no byte sent around 100 seconds
+	let receivedBytes = []
+	let check = () => {
+		let url = `${apiUrl}calls?x-access-token=${access_token}&connection_id=${connId}`
+		callAPI('get', url, undefined, function (body, code) {
+			if (code == 200) {
+				body = parseJSON(body) || []
+				activeCalls = {}
+				body.map && body.map((call) => (activeCalls[call.call_id] = call))
+			}
+
+			if (!peer) return
+			peer.getStats(null).then((stats) => {
+				let statsOutput = ''
+				let receivedByte = 0
+				stats.forEach((report) => {
+					if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+						receivedByte += report.bytesReceived || 0
+					}
+					if (report.type === 'inbound-rtp' && report.kind === 'video') {
+						receivedByte += report.bytesReceived || 0
+					}
+				})
+				receivedBytes.push(receivedByte)
+				while (receivedBytes.length > 10) receivedBytes.shift()
+				let diff = receivedBytes.filter((n) => n != receivedByte)
+				if (diff.length == 0 && receivedBytes.length >= 10 && Object.keys(activeCalls).length == 0) {
+					if (Object.keys(activeCalls).length == 0) stopMic()
+					// could tear down
+					peer.close()
+					peer = undefined
+				}
+			})
+		})
+	}
+	check()
+	env.setInterval(check, 30000)
+
+	let publish = (ev) => onEvent && onEvent(ev)
+
+	this.matchCall = (callid) => (!callid ? activeCalls : activeCalls[callid])
+
+	realtime.onEvent((ev) => {
+		if (!ev || !ev.type || !ev.data) return
+		// if (ev.type.startsWith('call')) console.log('EEEEEEE', ev)
+		if (env._is_webrtc_local && ev.user_id != '8') return // local
+		if (!env._is_webrtc_local && ev.user_id != '9') return // prod
+
+		if (ev.type == 'webrtc_candidate_added') {
+			let ice_candidate = ev.data.ice_candidate
+			if (!ice_candidate) return
+			return readyToSendCandidate.then(() => peer && peer.addIceCandidate(parseJSON(ice_candidate)))
+		}
+
+		if (ev.type == 'webrtc_negotiation_offered') {
+			console.log('RT/RECEIVE OFFERED NEGOTIATION', ev)
+			if (!peer) return
+			let negid = ev.id
+			if (!ev.data.ice_candidate) return
+			let offer = parseJSON(ev.data.ice_candidate)
+
+			peer
+				.setRemoteDescription(offer)
+				.then(() => {
+					readyToSendCandidateResolve()
+					if (pendingStream && pendingStream != currentStream) {
+						currentStream = pendingStream
+						currentStream.getTracks().forEach((track) => peer.addTrack(track, currentStream))
+					}
+					pendingStream = undefined
+					return peer.createAnswer()
+				})
+				.then((answer) =>
+					peer.setLocalDescription(answer).then(() => {
+						let url = `${apiUrl}finish?x-access-token=${access_token}&connection_id=${connId}&version=2&negotiation_id=${negid}`
+						callAPI('post', url, jsonify(answer), function (body, code) {
+							if (code !== 200) return console.error('CANNOT FINISH', body)
+							return
+						})
+					}),
+				)
+		}
+
+		let call_info = ev.data.call_info || {}
+		let callid = call_info.call_id
+		if (!callid) return
+
+		if (ev.type === 'call_invite_expired') {
+			activeCalls[callid] = call_info
+			let device_id = call_info.device_id
+			if (device_id == connId) return // ignore since we have accepted the call
+
+			publish(Object.assign({}, ev, {type: 'call_ended'})) // fake ended call
+			delete activeCalls[callid]
+		}
+		let type = ev.type
+		if (type == 'call_ended' || type == 'call_ringing' || type == 'call_joined' || type === 'call_invited') {
+			if (ev.type === 'call_invited' && agid == call_info.from_number) return // ignore our own invite
+			activeCalls[callid] = ev.data.call_info
+			return publish(ev)
+		}
+	})
+
+	this.makeCall = (number, fromnumber, stream) =>
+		new env.Promise((rs) => {
+			let callid = 'webcall-' + randomString(20)
+			this.joinCall(callid, stream, (err) => {
+				if (err) return rs({error: err})
+				let url = `${apiUrl}call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${number}&from_number=${fromnumber}`
+				callAPI('post', url, undefined, (body, code) => {
+					if (code != 200) return rs({error: body})
+					body = parseJSON(body)
+					if (body) activeCalls[callid] = body
+					rs({body})
+				})
+			})
+		})
+
+	this.hangupCall = (callid) => {
+		if (!callid) return
+		let call = activeCalls[callid]
+		if (!call) {
+			call = {call_id: callid}
+			activeCalls[callid] = call
+		}
+		call.status = 'ended'
+		call.ended = env.Date.now()
+		callAPI('post', `${apiUrl}hangup?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`)
+		publish({type: 'call_ended', data: {call_info: call}})
+	}
+
+	this.listenCall = (callid, cb) => {
+		let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
+		makeSure(() => callAPI('post', url, undefined, (body, code) => (code != 200 ? cb(body) : cb())))
+	}
+
+	this.joinCall = (callid, stream, cb) => {
+		console.time('makecall' + callid)
+		makeSure(() => {
+			pendingStream = stream
+			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
+			callAPI('post', url, undefined, (body, code) => {
+				if (code != 200) return cb(body)
+				let url = `${apiUrl}join?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
+				callAPI('post', url, undefined, (body, code) => {
+					console.timeEnd('makecall' + callid)
+					if (code != 200) return cb(body)
+					checkIceConnected(() => cb())
+				})
+			})
+		})
+	}
+
+	this.answerCall = (callid, stream) =>
+		new env.Promise((rs) => {
+			this.joinCall(callid, stream, (err) => {
+				if (err) return rs({error: err})
+				let url = `${apiUrl}answer?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
+				callAPI('post', url, undefined, (body, code) => {
+					body = parseJSON(body)
+					return code != 200 ? rs({error: body}) : rs({body})
+				})
+			})
+		})
+
+	this.sendDtmf = (key, callid) =>
+		new env.Promise((rs) => {
+			if (!callid) return rs({body: {}})
+			let url = `${apiUrl}dtml?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&key={key}`
+			makeSure(() =>
+				callAPI('post', url, undefined, (body, bode) => {
+					body = parseJSON(body)
+					return code != 200 ? rs({error: body}) : rs({body})
+				}),
+			)
+		})
+
+	this.transferCall = (tonumber, callid) =>
+		new env.Promise((rs) => {
+			if (!callid) return rs({})
+			let url = `${apiUrl}refer?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number={tonumber}`
+			makeSure(() =>
+				callAPI('post', url, undefined, (body, code) => {
+					body = parseJSON(body)
+					return code != 200 ? rs({error: body}) : rs({body})
+				}),
+			)
+		})
+}
+
+function randomString(len) {
+	var str = ''
+	if (!len || len < 1) len = 10
+	var asciiKey
+	for (var i = 0; i < len; i++) {
+		asciiKey = Math.floor(Math.random() * 25 + 97)
+		str += String.fromCharCode(asciiKey)
+	}
+	return str
+}
+
+module.exports = WebRTCConn
