@@ -150,21 +150,22 @@ function WebRTCConn(options) {
 				}
 			})
 
-			Object.keys(calls, (callid) => {
+			Object.keys(calls).map((callid) => {
 				let call = calls[callid]
-				if (endRequest[callid] && call && call.status != 'ended') {
-					calls[callid] = Object.assign({}, call, {
-						call_id: callid,
-						ended: endRequest[callid],
-						status: 'ended',
-						hangup_code: 'cancel',
-					})
-				}
+				if (!endRequest[callid]) return
+				if (!call || call.status == 'ended') return
+				calls[callid] = Object.assign({}, call, {
+					call_id: callid,
+					ended: endRequest[callid],
+					status: 'ended',
+					hangup_code: 'cancel',
+				})
 			})
 			return calls
 		}
 
 		let call = activeCalls[callid]
+		if (!call && dialingRequest[callid]) call = dialingRequest[callid]
 		if (endRequest[callid] && call && call.status != 'ended') {
 			return Object.assign({}, call, {
 				call_id: callid,
@@ -173,7 +174,6 @@ function WebRTCConn(options) {
 				hangup_code: 'cancel',
 			})
 		}
-		if (!call && dialingRequest[callid]) return dialingRequest[callid]
 		return call
 	}
 
