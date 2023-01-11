@@ -4,7 +4,6 @@ const servers = {
 	iceServers: [{urls: ['stun:stun.l.google.com:19302?transport=tcp']}],
 }
 
-// import {RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, mediaDevices} from 'react-native-webrtc'
 // let connId = 'webrtc' + sb.randomString(20)
 // env = {RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, setTimeout, setInterval, jsonify, parseJSON}
 // setting env._is_webrtc_local to true for local testing
@@ -31,6 +30,9 @@ function WebRTCConn(options) {
 	let pendingStream
 	let activeCalls = {}
 
+	let dialingRequest = {}
+	let endRequest = {}
+
 	let subscribe = realtime.subscribe([
 		`webrtc.account.${accid}.agent.${agid}`,
 		`webrtc.account.${accid}.agent.${agid}.webrtc_connection.${connId}`,
@@ -49,7 +51,7 @@ function WebRTCConn(options) {
 			() =>
 				new env.Promise((rs) => {
 					let pass = peer && (peer.iceConnectionState == 'connected' || peer.iceConnectionState == 'completed')
-					if (!pass) return env.setTimeout((_) => rs(true), 100) // keep looping ultil connected
+					if (!pass) return env.setTimeout((_) => rs(true), 100) // keep looping util connected
 					cb && cb()
 					rs(false)
 				}),
@@ -138,7 +140,30 @@ function WebRTCConn(options) {
 
 	let publish = (ev) => onEvent && onEvent(ev)
 
-	this.matchCall = (callid) => (!callid ? activeCalls : activeCalls[callid])
+	this.matchCall = (callid) => {
+		if (!callid || callid == '*' || callid == '-') {
+			let calls = Object.assign({}, activeCalls)
+			Object.keys(dialingRequest).map((callid) => {
+				let call = activeCalls[callid]
+				if (!call && dialingRequest[callid]) {
+					calls[callid] = dialingRequest[callid]
+				}
+			})
+			return calls
+		}
+
+		let call = activeCalls[callid]
+		if (endRequest[callid] && call && call.status != 'ended') {
+			return Object.assign({}, call, {
+				call_id: callid,
+				ended: endRequest[callid],
+				status: 'ended',
+				hangup_code: 'cancel',
+			})
+		}
+		if (!call && dialingRequest[callid]) return dialingRequest[callid]
+		return call
+	}
 
 	realtime.onEvent((ev) => {
 		if (!ev || !ev.type || !ev.data) return
@@ -186,17 +211,16 @@ function WebRTCConn(options) {
 		if (!callid) return
 
 		if (ev.type === 'call_invite_expired') {
-			activeCalls[callid] = call_info
 			let device_id = call_info.device_id
 			if (device_id == connId) return // ignore since we have accepted the call
-
 			publish(Object.assign({}, ev, {type: 'call_ended'})) // fake ended call
 			delete activeCalls[callid]
 		}
+
 		let type = ev.type
 		if (type == 'call_ended' || type == 'call_ringing' || type == 'call_joined' || type === 'call_invited') {
 			if (ev.type === 'call_invited' && agid == call_info.from_number) return // ignore our own invite
-			activeCalls[callid] = ev.data.call_info
+			activeCalls[callid] = call_info
 			return publish(ev)
 		}
 	})
@@ -204,11 +228,39 @@ function WebRTCConn(options) {
 	this.makeCall = (number, fromnumber, stream) =>
 		new env.Promise((rs) => {
 			let callid = 'webcall-' + randomString(20)
+			let call = {
+				account_id: accid,
+				call_id: callid,
+				device_id: connId,
+				direction: 'outbound',
+				member_id: agid,
+				started: env.Date.now(),
+				status: 'dialing',
+				to_number: number,
+			}
+			dialingRequest[callid] = call
+			publish({created: env.Date.now(), type: 'call_ringing', data: {call_info: call}}) // fake dialing
 			this.joinCall(callid, stream, (err) => {
-				if (err) return rs({error: err})
+				if (err) {
+					delete dialingRequest[callid]
+					endRequest[callid] = env.Date.now()
+					publish({
+						type: 'call_ended',
+						data: {call_info: {call_id: callid, ended: endRequest[callid], status: 'ended', hangup_code: 'error'}},
+					})
+					return rs({error: err})
+				}
 				let url = `${apiUrl}call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${number}&from_number=${fromnumber}`
 				callAPI('post', url, undefined, (body, code) => {
-					if (code != 200) return rs({error: body})
+					if (code != 200) {
+						delete dialingRequest[callid]
+						endRequest[callid] = env.Date.now()
+						publish({
+							type: 'call_ended',
+							data: {call_info: {call_id: callid, ended: endRequest[callid], status: 'ended', hangup_code: 'error'}},
+						})
+						return rs({error: err})
+					}
 					body = parseJSON(body)
 					if (body) activeCalls[callid] = body
 					rs({body})
@@ -218,6 +270,8 @@ function WebRTCConn(options) {
 
 	this.hangupCall = (callid) => {
 		if (!callid) return
+		endRequest[callid] = env.Date.now()
+
 		let call = activeCalls[callid]
 		if (!call) {
 			call = {call_id: callid}
@@ -238,15 +292,12 @@ function WebRTCConn(options) {
 		console.time('makecall' + callid)
 		makeSure(() => {
 			pendingStream = stream
-			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
+			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&talk=true`
 			callAPI('post', url, undefined, (body, code) => {
 				if (code != 200) return cb(body)
-				let url = `${apiUrl}join?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
-				callAPI('post', url, undefined, (body, code) => {
-					console.timeEnd('makecall' + callid)
-					if (code != 200) return cb(body)
-					checkIceConnected(() => cb())
-				})
+				console.timeEnd('makecall' + callid)
+				if (code != 200) return cb(body)
+				checkIceConnected(() => cb())
 			})
 		})
 	}
