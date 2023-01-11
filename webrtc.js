@@ -144,9 +144,21 @@ function WebRTCConn(options) {
 		if (!callid || callid == '*' || callid == '-') {
 			let calls = Object.assign({}, activeCalls)
 			Object.keys(dialingRequest).map((callid) => {
-				let call = activeCalls[callid]
+				let call = calls[callid]
 				if (!call && dialingRequest[callid]) {
 					calls[callid] = dialingRequest[callid]
+				}
+			})
+
+			Object.keys(calls, (callid) => {
+				let call = calls[callid]
+				if (endRequest[callid] && call && call.status != 'ended') {
+					calls[callid] = Object.assign({}, call, {
+						call_id: callid,
+						ended: endRequest[callid],
+						status: 'ended',
+						hangup_code: 'cancel',
+					})
 				}
 			})
 			return calls
