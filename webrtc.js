@@ -4,9 +4,9 @@ const servers = {
 	iceServers: [{urls: ['stun:stun.l.google.com:19302?transport=tcp']}],
 }
 
-// let connId = 'webrtc' + sb.randomString(20)
+// let connId = 'webrtc' + randomString(20)
 // env = {RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, setTimeout, setInterval, jsonify, parseJSON}
-// setting env._is_webrtc_local to true for local testing
+// set env._is_webrtc_local to true for local testing
 function WebRTCConn(options) {
 	let {apiUrl, access_token, accid, agid, connId, realtime, callAPI, env, onTrack, onEvent} = options
 	if (!apiUrl) {
@@ -318,10 +318,13 @@ function WebRTCConn(options) {
 	}
 
 	this.answerCall = (callid, stream) => {
+		console.log('1')
 		let call = activeCalls[callid]
-		if (!call || call.status == 'ended') return Promise.resolve({error: 'call_ended'})
+		if (call && call.status == 'ended') return Promise.resolve({error: 'call_ended'})
 		let now = env.Date.now()
+		console.log('2', answerRequest[callid])
 		if (answerRequest[callid]) return Promise.resolve({body: call})
+		console.log('3')
 		answerRequest[callid] = now
 		publish({type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
 		return new env.Promise((rs) => {
