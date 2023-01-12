@@ -1,6 +1,6 @@
 {
 	"name": "@subiz/wsclient",
-	"version": "4.0.4",
+	"version": "4.0.5",
 	"main": "realtime.js",
 	"scripts": {
 		"test": "node realtime.test.js"
