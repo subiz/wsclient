@@ -31,6 +31,7 @@ function WebRTCConn(options) {
 	let activeCalls = {}
 
 	let dialingRequest = {}
+	let answerRequest = {}
 	let endRequest = {}
 
 	let subscribe = realtime.subscribe([
@@ -70,10 +71,8 @@ function WebRTCConn(options) {
 		if (!needConnect) return
 		peer = new env.RTCPeerConnection(servers)
 		let mypeer = peer
-		window.peer = peer
 
 		readyToSendCandidate = new env.Promise((rs) => (readyToSendCandidateResolve = rs))
-
 		peer.ontrack = (event) => {
 			if (peer != mypeer) return // outdated
 			onTrack && onTrack(event)
@@ -161,19 +160,26 @@ function WebRTCConn(options) {
 					hangup_code: 'cancel',
 				})
 			})
+
+			Object.keys(answerRequest).map((callid) => {
+				let call = calls[callid]
+				if (!call) return
+				call.answer_requested = answerRequest[callid]
+			})
 			return calls
 		}
 
 		let call = activeCalls[callid]
 		if (!call && dialingRequest[callid]) call = dialingRequest[callid]
 		if (endRequest[callid] && call && call.status != 'ended') {
-			return Object.assign({}, call, {
+			call = Object.assign({}, call, {
 				call_id: callid,
 				ended: endRequest[callid],
 				status: 'ended',
 				hangup_code: 'cancel',
 			})
 		}
+		if (answerRequest[callid]) call = Object.assign({}, call, {answer_requested: answerRequest[callid]})
 		return call
 	}
 
