@@ -15,6 +15,7 @@ function WebRTCConn(options) {
 	}
 
 	callAPI = callAPI || xhrsend // allow hook
+	let callStream = {} // callid => stream
 
 	let parseJSON = (str) => {
 		try {
@@ -89,13 +90,12 @@ function WebRTCConn(options) {
 		console.log('NEW PERR')
 	}
 
-	let stopMic = () => {
-		console.log('00000000STOP TRACK', currentStream)
-		return
-		currentStream &&
-			currentStream.getTracks().forEach((track) => {
-				track.enabled = false
-			})
+	let stopStream = (stream) => {
+		if (!stream) return
+		stream.getTracks().forEach((track) => {
+			track.stop()
+			track.enabled = false
+		})
 	}
 
 	// auto tear down when byte received is zero
@@ -106,8 +106,16 @@ function WebRTCConn(options) {
 		callAPI('get', url, undefined, function (body, code) {
 			if (code == 200) {
 				body = parseJSON(body) || []
-				activeCalls = {}
-				body.map && body.map((call) => (activeCalls[call.call_id] = call))
+				let serverCall = {}
+				body.map && body.map((call) => (serverCall[call.call_id] = call))
+
+				// not found
+				Object.keys(activeCalls).map((callid) => {
+					let call = activeCalls[callid]
+					if (!serverCall[callid] && call && call.status != 'ended')
+						publish({type: 'call_ended', data: {call_info: {hanup_code: 'outdated', call_id: callid}}})
+				})
+				activeCalls = serverCall
 			}
 
 			if (!peer) return
@@ -126,7 +134,6 @@ function WebRTCConn(options) {
 				while (receivedBytes.length > 10) receivedBytes.shift()
 				let diff = receivedBytes.filter((n) => n != receivedByte)
 				if (diff.length == 0 && receivedBytes.length >= 10 && Object.keys(activeCalls).length == 0) {
-					if (Object.keys(activeCalls).length == 0) stopMic()
 					// could tear down
 					peer.close()
 					peer = undefined
@@ -137,7 +144,14 @@ function WebRTCConn(options) {
 	check()
 	env.setInterval(check, 30000)
 
-	let publish = (ev) => onEvent && onEvent(ev)
+	let publish = (ev) => {
+		if (ev.type == 'call_ended') {
+			let callid = lo.get(ev, 'data.call_info.call_id')
+			stopStream(callStream[callid])
+			delete callStream[callid]
+		}
+		onEvent && onEvent(ev)
+	}
 
 	this.matchCall = (callid) => {
 		if (!callid || callid == '*' || callid == '-') {
@@ -305,6 +319,7 @@ function WebRTCConn(options) {
 	}
 
 	this.joinCall = (callid, stream, cb) => {
+		callStream[callid] = stream
 		console.time('makecall' + callid)
 		makeSure(() => {
 			pendingStream = stream
