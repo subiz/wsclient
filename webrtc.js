@@ -243,8 +243,8 @@ function WebRTCConn(options) {
 		}
 	})
 
-	this.makeCall = (number, fromnumber, stream) => {
-		let callid = 'webcall-' + randomString(30)
+	this.makeCall = (number, fromnumber, stream, callid) => {
+		if (!callid) callid = 'webcall-' + randomString(30)
 		let now = env.Date.now()
 		let call = {
 			account_id: accid,
@@ -294,8 +294,9 @@ function WebRTCConn(options) {
 		}
 		call.status = 'ended'
 		call.ended = env.Date.now()
-		callAPI('post', `${apiUrl}hangup?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`)
 		publish({type: 'call_ended', data: {call_info: {call_id: callid}}})
+
+		callAPI('post', `${apiUrl}hangup?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`)
 	}
 
 	this.listenCall = (callid, cb) => {
@@ -318,13 +319,10 @@ function WebRTCConn(options) {
 	}
 
 	this.answerCall = (callid, stream) => {
-		console.log('1')
 		let call = activeCalls[callid]
 		if (call && call.status == 'ended') return Promise.resolve({error: 'call_ended'})
 		let now = env.Date.now()
-		console.log('2', answerRequest[callid])
 		if (answerRequest[callid]) return Promise.resolve({body: call})
-		console.log('3')
 		answerRequest[callid] = now
 		publish({type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
 		return new env.Promise((rs) => {
