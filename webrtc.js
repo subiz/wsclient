@@ -1,7 +1,7 @@
 var flow = require('@subiz/flow')
 var {xhrsend} = require('./common.js')
 const servers = {
-	iceServers: [{urls: ['stun:stun.l.google.com:19302?transport=tcp']}],
+	iceServers: [{urls: ['stun:stun.l.google.com:19302']}],
 }
 
 // let connId = 'webrtc' + randomString(20)
