@@ -291,6 +291,7 @@ function WebRTCConn(options) {
 					}
 					body = parseJSON(body)
 					if (body) activeCalls[callid] = body
+					delete dialingRequest[callid]
 					rs({body})
 				})
 			})
