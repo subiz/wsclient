@@ -222,7 +222,17 @@ function WebRTCConn(options) {
 					readyToSendCandidateResolve()
 					if (pendingStream && pendingStream != currentStream) {
 						currentStream = pendingStream
-						currentStream.getTracks().forEach((track) => peer.addTrack(track, currentStream))
+						currentStream.getTracks().forEach((track) => {
+							let replaced = false
+							peer.getSenders().forEach((sender) => {
+								if (!sender.track) return
+								if (sender.track.kind != track.kind) return
+								sender.replaceTrack(track)
+								replaced = true
+							})
+
+							if (!replaced) peer.addTrack(track, currentStream)
+						})
 					}
 					pendingStream = undefined
 					return peer.createAnswer()
