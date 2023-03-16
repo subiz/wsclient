@@ -267,7 +267,7 @@ function WebRTCConn(options) {
 		}
 	})
 
-	this.makeCall = (number, fromnumber, stream, callid) => {
+	this.makeCall = (number, fromnumber, streamPm, callid) => {
 		if (!callid) callid = 'webcall-' + randomString(30)
 		let now = env.Date.now()
 		let call = {
@@ -283,26 +283,28 @@ function WebRTCConn(options) {
 		dialingRequest[callid] = call
 		publish({type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
 		return new env.Promise((rs) => {
-			this.joinCall(callid, stream, (err) => {
-				if (err) {
-					delete dialingRequest[callid]
-					endRequest[callid] = env.Date.now()
-					publish({type: 'call_ended', data: {call_info: {call_id: callid}}})
-					return rs({error: err})
-				}
-
-				let url = `${apiUrl}call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${number}&from_number=${fromnumber}`
-				callAPI('post', url, undefined, (body, code) => {
-					if (code != 200) {
+			streamPm.then(stream => {
+				this.joinCall(callid, stream, (err) => {
+					if (err) {
 						delete dialingRequest[callid]
 						endRequest[callid] = env.Date.now()
 						publish({type: 'call_ended', data: {call_info: {call_id: callid}}})
 						return rs({error: err})
 					}
-					body = parseJSON(body)
-					if (body) activeCalls[callid] = body
-					delete dialingRequest[callid]
-					rs({body})
+
+					let url = `${apiUrl}call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${number}&from_number=${fromnumber}`
+					callAPI('post', url, undefined, (body, code) => {
+						if (code != 200) {
+							delete dialingRequest[callid]
+							endRequest[callid] = env.Date.now()
+							publish({type: 'call_ended', data: {call_info: {call_id: callid}}})
+							return rs({error: err})
+						}
+						body = parseJSON(body)
+						if (body) activeCalls[callid] = body
+						delete dialingRequest[callid]
+						rs({body})
+					})
 				})
 			})
 		})
