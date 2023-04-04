@@ -270,7 +270,7 @@ function WebRTCConn(options) {
 				.then(() => {
 					readyToSendCandidateResolve[connId]()
 					let stream = streams[connId]
-					stream.getTracks().forEach((track) => {
+					stream && stream.getTracks().forEach((track) => {
 						let replaced = false
 						peer.getSenders().forEach((sender) => {
 							if (!sender.track) return
