@@ -1,6 +1,6 @@
 {
 	"name": "@subiz/wsclient",
-	"version": "4.0.14",
+	"version": "4.0.15",
 	"main": "realtime.js",
 	"scripts": {
 		"test": "node realtime.test.js"
@@ -17,7 +17,7 @@
 		"tape": "^5.6.3"
 	},
 	"dependencies": {
-		"@subiz/flow": "^1.0.9",
+		"@subiz/flow": "^1.1.0",
 		"request": "^2.88.2"
 	}
 }

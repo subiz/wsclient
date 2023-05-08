@@ -270,16 +270,17 @@ function WebRTCConn(options) {
 				.then(() => {
 					readyToSendCandidateResolve[connId]()
 					let stream = streams[connId]
-					stream && stream.getTracks().forEach((track) => {
-						let replaced = false
-						peer.getSenders().forEach((sender) => {
-							if (!sender.track) return
-							if (sender.track.kind != track.kind) return
-							sender.replaceTrack(track)
-							replaced = true
+					stream &&
+						stream.getTracks().forEach((track) => {
+							let replaced = false
+							peer.getSenders().forEach((sender) => {
+								if (!sender.track) return
+								if (sender.track.kind != track.kind) return
+								sender.replaceTrack(track)
+								replaced = true
+							})
+							if (!replaced) peer.addTrack(track, stream)
 						})
-						if (!replaced) peer.addTrack(track, stream)
-					})
 					return peer.createAnswer()
 				})
 				.then((answer) =>
@@ -322,7 +323,7 @@ function WebRTCConn(options) {
 		}
 	})
 
-	this.makeCall = (number, fromnumber, streamPm, callid) => {
+	this.makeCall = (number, fromnumber, streamPm, callid, campaignid, outboundcallentryid) => {
 		if (!callid) callid = 'webcall-' + randomString(30)
 		let now = env.Date.now()
 		let call = {
@@ -347,7 +348,7 @@ function WebRTCConn(options) {
 							return rs({error: err})
 						}
 
-						let url = `${apiUrl}call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${number}&from_number=${fromnumber}`
+						let url = `${apiUrl}call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${number}&from_number=${fromnumber}&campaign_id=${campaignid}&outbound_call_entry_id=${outboundcallentryid}`
 						callAPI('post', url, undefined, (body, code) => {
 							if (code != 200) {
 								delete dialingRequest[callid]
