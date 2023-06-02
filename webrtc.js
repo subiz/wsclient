@@ -334,6 +334,7 @@ function WebRTCConn(options) {
 			started: now,
 			status: 'dialing',
 			to_number: number,
+			from_number: fromnumber,
 		}
 		dialingRequest[callid] = call
 		publish({type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
