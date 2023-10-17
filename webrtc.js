@@ -311,6 +311,7 @@ function WebRTCConn(options) {
 
 		if (ev.type === 'call_invite_expired') {
 			if (Object.keys(peers).find((cid) => cid == call_info.device_id)) return // this call invitation is expired by us => ignore
+			serverCalls[callid] = call_info
 			publish(Object.assign({}, ev, {type: 'call_ended'})) // fake ended call
 			return
 		}
