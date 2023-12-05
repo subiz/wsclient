@@ -63,4 +63,19 @@ function Pubsub() {
 	}
 }
 
-module.exports = {xhrsend, parseJSON, Pubsub}
+function randomString(len, base) {
+	var str = ''
+	if (!len || len < 1) len = 10
+	var asciiKey
+	for (var i = 0; i < len; i++) {
+		if (base) {
+			str += base[Math.floor(Math.random() * base.length)]
+		} else {
+			asciiKey = Math.floor(Math.random() * 25 + 97)
+			str += String.fromCharCode(asciiKey)
+		}
+	}
+	return str
+}
+
+module.exports = {xhrsend, parseJSON, Pubsub, randomString}

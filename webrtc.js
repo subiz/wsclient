@@ -1,5 +1,5 @@
 var flow = require('@subiz/flow')
-var {xhrsend} = require('./common.js')
+var {xhrsend, randomString} = require('./common.js')
 const servers = {
 	iceServers: [{urls: ['stun:stun.l.google.com:19302']}],
 }
@@ -59,7 +59,6 @@ function WebRTCConn(options) {
 			])
 			.then((err) => {
 				// create peer connection
-
 				cb(err, connId)
 			})
 	}
@@ -109,7 +108,11 @@ function WebRTCConn(options) {
 				if (!call.hangup_code) call.hangup_code = 'cancel'
 				if (call.status != 'ended') {
 					call.status = 'ended'
-					publish({type: 'call_ended', data: {call_info: {hanup_code: 'outdated', call_id: callid}}})
+					publish({
+						created: env.Date.now(),
+						type: 'call_ended',
+						data: {call_info: {hanup_code: 'outdated', call_id: callid}},
+					})
 				}
 			})
 
@@ -255,7 +258,7 @@ function WebRTCConn(options) {
 		}
 
 		if (ev.type == 'webrtc_negotiation_offered') {
-			console.log('RT/RECEIVE OFFERED NEGOTIATION', ev)
+			// console.log('RT/RECEIVE OFFERED NEGOTIATION', ev)
 			let jsonoffer = ev && ev.data && ev.data.webrtc_message && ev.data.webrtc_message.offer
 			let connId = ev && ev.data && ev.data.webrtc_message && ev.data.webrtc_message.connection_id
 			let peer = peers[connId]
@@ -338,7 +341,7 @@ function WebRTCConn(options) {
 			from_number: fromnumber,
 		}
 		dialingRequest[callid] = call
-		publish({type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
+		publish({created: now, type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
 		return new env.Promise((rs) => {
 			streamPm
 				.then((stream) => {
@@ -346,16 +349,18 @@ function WebRTCConn(options) {
 						if (err) {
 							delete dialingRequest[callid]
 							endRequest[callid] = env.Date.now()
-							publish({type: 'call_ended', data: {call_info: {call_id: callid}}})
+							publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
 							return rs({error: err})
 						}
 
-						let url = `${apiUrl}call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${number}&from_number=${fromnumber}&campaign_id=${campaignid}&outbound_call_entry_id=${outboundcallentryid}`
+						let url = `${apiUrl}call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${number}&from_number=${fromnumber}`
+						if (outboundcallentryid) url += `&outbound_call_entry_id=${outboundcallentryid}`
+						if (campaignid) url += `&campaign_id=${campaignid}`
 						callAPI('post', url, undefined, (body, code) => {
 							if (code != 200) {
 								delete dialingRequest[callid]
 								endRequest[callid] = env.Date.now()
-								publish({type: 'call_ended', data: {call_info: {call_id: callid}}})
+								publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
 								return rs({error: err})
 							}
 							body = parseJSON(body)
@@ -380,7 +385,7 @@ function WebRTCConn(options) {
 		}
 		call.status = 'ended'
 		call.ended = env.Date.now()
-		publish({type: 'call_ended', data: {call_info: {call_id: callid}}})
+		publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
 		callAPI('post', `${apiUrl}hangup?x-access-token=${access_token}&call_id=${callid}`)
 	}
 
@@ -412,13 +417,13 @@ function WebRTCConn(options) {
 		let now = env.Date.now()
 		if (answerRequest[callid]) return Promise.resolve({body: call})
 		answerRequest[callid] = now
-		publish({type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
+		publish({created: env.Date.now(), type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
 		return new env.Promise((rs) => {
 			this.joinCall(callid, stream, (err, connId) => {
 				if (err) {
 					delete answerRequest[callid]
 					endRequest[callid] = now
-					publish({type: 'call_ended', data: {call_info: {call_id: callid}}})
+					publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
 					return rs({error: err})
 				}
 				let url = `${apiUrl}answer?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
@@ -427,7 +432,7 @@ function WebRTCConn(options) {
 					if (code != 200) {
 						delete answerRequest[callid]
 						endRequest[callid] = now
-						publish({type: 'call_ended', data: {call_info: {call_id: callid}}})
+						publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
 						return rs({error: body})
 					}
 					return rs({body})
@@ -464,17 +469,6 @@ function WebRTCConn(options) {
 				}),
 			)
 		})
-}
-
-function randomString(len) {
-	var str = ''
-	if (!len || len < 1) len = 10
-	var asciiKey
-	for (var i = 0; i < len; i++) {
-		asciiKey = Math.floor(Math.random() * 25 + 97)
-		str += String.fromCharCode(asciiKey)
-	}
-	return str
 }
 
 module.exports = WebRTCConn
