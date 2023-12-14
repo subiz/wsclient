@@ -129,7 +129,7 @@ function WebPhone(access_token, realtime) {
 	}
 
 	var base = '0123456789abcdef'
-	this.makeCall = function (number, fromnumber) {
+	this.makeCall = function (number, fromnumber, streamPm) {
 		// '11edc52b-2918-4d71-9058-f7285e29d894'
 		var callid =
 			randomString(8, base) +
@@ -142,12 +142,14 @@ function WebPhone(access_token, realtime) {
 			'-' +
 			randomString(12, base)
 
-			current_call_id = callid
-		return webrtcconn.makeCall(number, fromnumber, getMicroPermissions(), callid)
+		current_call_id = callid
+
+		if (!streamPm) streamPm = getMicroPermissions()
+		return webrtcconn.makeCall(number, fromnumber, streamPm, callid)
 	}
 
 	var current_call_id = ''
-		this.getCurrentCallId = function () {
+	this.getCurrentCallId = function () {
 		return current_call_id
 	}
 
