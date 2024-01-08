@@ -8,7 +8,8 @@ const servers = {
 // env = {RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, setTimeout, setInterval, jsonify, parseJSON}
 // set env._is_webrtc_local to true for local testing
 function WebRTCConn(options) {
-	let {apiUrl, access_token, accid, agid, realtime, callAPI, env, onTrack, onEvent} = options
+	let {apiUrl, access_token, accid, agid, realtime, callAPI, env, onTrack, onEvent, collect} = options
+	if (!collect) collect = function () {}
 	if (!apiUrl) {
 		apiUrl = 'https://callcenter.subiz.com.vn/wc/'
 		if (env._is_webrtc_local) apiUrl = 'http://localhost:8008/'
@@ -390,19 +391,24 @@ function WebRTCConn(options) {
 	}
 
 	this.listenCall = (callid, cb) => {
+		let start = env.Date.now()
 		initSession((err, connId) => {
 			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
-			callAPI('post', url, undefined, (body, code) => (code != 200 ? cb(body) : cb()))
+			callAPI('post', url, undefined, (body, code) => {
+				collect('listen_call', callid, env.Date.now() - start)
+				return code != 200 ? cb(body) : cb()
+			})
 		})
 	}
 
 	this.joinCall = (callid, stream, cb) => {
-		console.time('makecall' + callid)
+		let start = env.Date.now()
 		initSession((err, connId) => {
 			call2Connection[callid] = connId
 			streams[connId] = stream
 			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&talk=true`
 			callAPI('post', url, undefined, (body, code) => {
+				collect('join_call', callid, env.Date.now() - start)
 				if (code != 200) return cb(body, connId)
 				console.timeEnd('makecall' + callid)
 				if (code != 200) return cb(body, connId)
@@ -446,7 +452,6 @@ function WebRTCConn(options) {
 			if (!callid) return rs({body: {}})
 			let connId = call2Connection[callid]
 			if (!connId) return rs({body: {}})
-
 			let url = `${apiUrl}dtml?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&key={key}`
 			initSession(() =>
 				callAPI('post', url, undefined, (body, bode) => {
@@ -464,6 +469,7 @@ function WebRTCConn(options) {
 			let url = `${apiUrl}refer?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number={tonumber}`
 			initSession(() =>
 				callAPI('post', url, undefined, (body, code) => {
+					collect('listen_call', callid, env.Date.now() - start)
 					body = parseJSON(body)
 					return code != 200 ? rs({error: body}) : rs({body})
 				}),
