@@ -1,5 +1,5 @@
 var flow = require('@subiz/flow')
-var {xhrsend, randomString} = require('./common.js')
+var {logError, xhrsend, randomString} = require('./common.js')
 const servers = {
 	iceServers: [{urls: ['stun:stun.l.google.com:19302']}],
 }
@@ -291,7 +291,10 @@ function WebRTCConn(options) {
 					peer.setLocalDescription(answer).then(() => {
 						let url = `${apiUrl}finish?x-access-token=${access_token}&connection_id=${connId}&version=2&negotiation_id=${negid}`
 						callAPI('post', url, jsonify(answer), function (body, code) {
-							if (code !== 200) return console.error('CANNOT FINISH', body)
+							if (code !== 200) {
+								logError(accid, agid, body, 'finish:295')
+								return console.error('CANNOT FINISH', body)
+							}
 							return
 						})
 					}),
@@ -303,7 +306,7 @@ function WebRTCConn(options) {
 		if (!callid) return
 		let type = ev.type
 		if (type === 'call_invited') {
-			if (ev.type === 'call_invited' && agid == call_info.from_number) return // ignore our own invite
+			if (agid == call_info.from_number) return // ignore our own invite
 			serverCalls[callid] = call_info
 			return publish(ev)
 		}
@@ -359,6 +362,7 @@ function WebRTCConn(options) {
 						if (campaignid) url += `&campaign_id=${campaignid}`
 						callAPI('post', url, undefined, (body, code) => {
 							if (code != 200) {
+								logError(accid, agid, body, 'makeCall:365')
 								delete dialingRequest[callid]
 								endRequest[callid] = env.Date.now()
 								publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
@@ -395,6 +399,7 @@ function WebRTCConn(options) {
 		initSession((err, connId) => {
 			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
 			callAPI('post', url, undefined, (body, code) => {
+				if (code != 200) logError(accid, agid, body, 'listenCall:399')
 				collect('listen_call', callid, env.Date.now() - start)
 				return code != 200 ? cb(body) : cb()
 			})
@@ -408,9 +413,8 @@ function WebRTCConn(options) {
 			streams[connId] = stream
 			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&talk=true`
 			callAPI('post', url, undefined, (body, code) => {
+				if (code != 200) logError(accid, agid, body, 'joinCall:413')
 				collect('join_call', callid, env.Date.now() - start)
-				if (code != 200) return cb(body, connId)
-				console.timeEnd('makecall' + callid)
 				if (code != 200) return cb(body, connId)
 				checkIceConnected(peers[connId], () => cb(undefined, connId))
 			})
@@ -436,6 +440,7 @@ function WebRTCConn(options) {
 				callAPI('post', url, undefined, (body, code) => {
 					body = parseJSON(body)
 					if (code != 200) {
+						logError(accid, agid, body, 'answerCall:442')
 						delete answerRequest[callid]
 						endRequest[callid] = now
 						publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
@@ -454,7 +459,8 @@ function WebRTCConn(options) {
 			if (!connId) return rs({body: {}})
 			let url = `${apiUrl}dtml?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&key={key}`
 			initSession(() =>
-				callAPI('post', url, undefined, (body, bode) => {
+				callAPI('post', url, undefined, (body, code) => {
+					if (code != 200) logError(accid, agid, body, 'sendDtmf:463')
 					body = parseJSON(body)
 					return code != 200 ? rs({error: body}) : rs({body})
 				}),
@@ -469,7 +475,8 @@ function WebRTCConn(options) {
 			let url = `${apiUrl}refer?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number={tonumber}`
 			initSession(() =>
 				callAPI('post', url, undefined, (body, code) => {
-					collect('listen_call', callid, env.Date.now() - start)
+					if (code != 200) logError(accid, agid, body, 'transferCall:478')
+					collect('transfer_call', callid, env.Date.now() - start)
 					body = parseJSON(body)
 					return code != 200 ? rs({error: body}) : rs({body})
 				}),

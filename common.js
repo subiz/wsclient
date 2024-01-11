@@ -1,3 +1,41 @@
+function logError(accid, userid, message, line) {
+	// 24-01-11 04:07:05 app ERROR api-8948967b6-qtpfx subiz /app/vendor/github.com/subiz/log/error.go:271 {"id":141534190473829746,"class":500,"code":"locked_account,internal","number":"8f2b97e9","fields":{"ip":"\"171.224.84.93\"","no_report":"true","user_agent":"\"Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36\""}}
+	let ts = displayUTCLogTime(new Date())
+	let msg = JSON.stringify({
+		id: Date.now(),
+		class: 400,
+		code: 'frontend_error',
+		number: line
+			.split('')
+			.map((c) => c.charCodeAt(0).toString(16).padStart(2, '0'))
+			.join(''),
+		fields: {
+			message: JSON.stringify(message),
+			user_id: userid,
+			url: JSON.stringify(location.href),
+		},
+	})
+
+	xhrsend('POST', 'https://track.subiz.net/collect', `${ts} app ERROR dashboard ${accid} ${line} ${msg}`)
+}
+
+function displayUTCLogTime(date) {
+	let yyyy = date.getUTCFullYear().toString()
+	let yy = yyyy.substr(2, 2)
+	let mm = date.getUTCMonth() + 1
+	let dd = date.getUTCDate()
+	let hh = date.getUTCHours()
+	let MM = date.getUTCMinutes()
+	let ss = date.getUTCSeconds()
+
+	return `${yy}-${pad(mm)}-${pad(dd)} ${pad(hh)}:${pad(MM)}:${pad(ss)}`
+}
+
+function pad(v) {
+	if (v < 10) return `0${v}`
+	return `${v}`
+}
+
 function dofetch(method, url, body, cb) {
 	let headers = {}
 	if (body) headers['content-type'] = 'text/plain'
@@ -78,4 +116,4 @@ function randomString(len, base) {
 	return str
 }
 
-module.exports = {xhrsend, parseJSON, Pubsub, randomString}
+module.exports = {xhrsend, parseJSON, Pubsub, randomString, logError}
