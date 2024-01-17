@@ -56,6 +56,31 @@ function WebPhone(access_token, realtime) {
 		},
 	})
 
+	var _numbers = []
+	var _fetchNumbers = function () {
+		xhrsend(
+			'get',
+			`https://api.subiz.com.vn/4.0/integrations?x-access-token=${access_token}`,
+			undefined,
+			function (body, code) {
+				setTimeout(_fetchNumbers, 120_000)
+				if (code != 200) return
+				var integrations = parseJSON(body)
+				if (!integrations || !integrations.length) return
+				var numbers = []
+				for (var i = 0; i < integrations.length; i++) {
+					var integration = integrations[i] || {}
+					if (integration.connector_type == 'call' && integration.state == 'activated') {
+						var number = integration.id.split('.')[1]
+						numbers.push(number)
+					}
+				}
+				_numbers = numbers
+			},
+		)
+	}
+	_fetchNumbers()
+
 	this.onEvent = function (cb) {
 		return pubsub.on('event', cb)
 	}
@@ -129,23 +154,54 @@ function WebPhone(access_token, realtime) {
 	}
 
 	var base = '0123456789abcdef'
-	this.makeCall = function (number, fromnumber, streamPm) {
-		// '11edc52b-2918-4d71-9058-f7285e29d894'
-		var callid =
-			randomString(8, base) +
-			'-' +
-			randomString(4, base) +
-			'-' +
-			randomString(4, base) +
-			'-' +
-			randomString(4, base) +
-			'-' +
-			randomString(12, base)
+	// makeCall(number, [] || undefined || '', streamPm) // fallback all number
+	// makeCall(number, ['a','b','c'], streamPm) // fallback specific number
+	// makeCall(number, function() {}, streamPm) //
+	this.makeCall = function (number, fromnumbers, streamPm, _a, _b, _state) {
+		if (!_state) _state = {}
+		if (!fromnumbers || (Array.isArray(fromnumbers) && fromnumbers.length == 0)) {
+			fromnumbers = _numbers
+		}
 
+		if (typeof fromnumbers === 'string' || fromnumbers instanceof String || typeof value === 'number') {
+			fromnumbers = [fromnumbers + '']
+		}
+
+		// '11edc52b-2918-4d71-9058-f7285e29d894'
+		var callid = `${randomString(8, base)}-${randomString(4, base)}-${randomString(4, base)}`
+		callid += `-${randomString(4, base)}-${randomString(12, base)}`
 		current_call_id = callid
 
 		if (!streamPm) streamPm = getMicroPermissions()
-		return webrtcconn.makeCall(number, fromnumber, streamPm, callid)
+
+		let callnumber = chooseCallNumber(fromnumbers, _state.called)
+		if (!callnumber)
+			return (
+				_state.last_result || {
+					start: Date.now(),
+					ended: Date.now(),
+					direction: 'outbound',
+					account_id: accid,
+					to_number: number,
+					error: 'out_of_number',
+					id: callid,
+					hangup_code: 'failure',
+					status: 'ended',
+				}
+			)
+		return webrtcconn.makeCall(number, callnumber, streamPm, callid).then((out) => {
+			if (out.error) return out
+			if (out.hangup_code == 'cancel') return out
+			if (out.answered > 0) return out
+
+			if (out.hangup_code == 'terminated' || out.hangup_code == 'failure' || out.hangup_code == 'congestion') {
+				if (!_state.called) _state.called = {}
+				_state.called[callnumber] = true
+				_state.last_result = out
+				return this.makeCall(number, fromnumbers, streamPm, _a, _b, _state)
+			}
+			return out
+		})
 	}
 
 	var current_call_id = ''
@@ -183,3 +239,14 @@ function WebPhone(access_token, realtime) {
 
 window.SbzWebPhone1 = WebPhone
 module.exports = WebPhone
+
+function chooseCallNumber(numbers, called) {
+	if (!called) called = {}
+	if (!numbers || !numbers.length) return ''
+	for (var i = 0; i < numbers.length; i++) {
+		var number = numbers[i]
+		if (called[number]) continue
+		return number
+	}
+	return ''
+}

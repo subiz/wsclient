@@ -168,6 +168,7 @@ function WebRTCConn(options) {
 	}
 	env.setInterval(cleanEndedCall, 120000)
 
+	let endcallCb = {}
 	let publish = (ev) => {
 		if (ev.type == 'call_ended') {
 			let callid = ev.data && ev.data.call_info && ev.data.call_info.call_id
@@ -181,6 +182,13 @@ function WebRTCConn(options) {
 			// do not clean up this now or some functions cannot work after the call ended
 			// DONOT: delete call2Connection[callid]
 			delete streams[connId]
+
+			Object.keys(endcallCb).map((callid) => {
+				let arr = endcallCb[callid]
+				if (!arr || arr.length == 0 || !arr.map) return
+				arr.map((cb) => cb())
+				delete endcallCb[callid]
+			})
 		}
 
 		let direction = ev.data && ev.data.call_info && ev.data.call_info.direction
@@ -371,7 +379,11 @@ function WebRTCConn(options) {
 							body = parseJSON(body)
 							if (body) serverCalls[callid] = body
 							delete dialingRequest[callid]
-							rs({body})
+
+							let call = this.matchCall(callid)
+							if (call && call.status == 'ended') return rs(call)
+							if (!endcallCb[callid]) endcallCb[callid] = []
+							endcallCb[callid].push(() => rs(this.matchCall(callid)))
 						})
 					})
 				})
@@ -389,6 +401,7 @@ function WebRTCConn(options) {
 			serverCalls[callid] = call
 		}
 		call.status = 'ended'
+		call.hangup_code = 'cancel'
 		call.ended = env.Date.now()
 		publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
 		callAPI('post', `${apiUrl}hangup?x-access-token=${access_token}&call_id=${callid}`)

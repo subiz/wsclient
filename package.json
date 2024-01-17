@@ -1,8 +1,9 @@
 {
 	"name": "@subiz/wsclient",
-	"version": "4.0.21",
+	"version": "4.0.22",
 	"main": "realtime.js",
 	"scripts": {
+		"dev": "vite",
 		"test": "node realtime.test.js"
 	},
 	"repository": {
@@ -14,10 +15,11 @@
 	"homepage": "https://github.com/subiz/wsclient#readme",
 	"description": "",
 	"devDependencies": {
-		"tape": "^5.7.2"
+		"tape": "^5.7.3",
+		"vite": "^5.0.4",
+		"vite-plugin-commonjs": "^0.10.1"
 	},
 	"dependencies": {
-		"@subiz/flow": "^1.1.0",
-		"request": "^2.88.2"
+		"@subiz/flow": "^1.1.0"
 	}
 }
