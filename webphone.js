@@ -63,7 +63,7 @@ function WebPhone(access_token, realtime) {
 			`https://api.subiz.com.vn/4.0/integrations?x-access-token=${access_token}`,
 			undefined,
 			function (body, code) {
-				setTimeout(_fetchNumbers, 120_000)
+				setTimeout(_fetchNumbers, 120000)
 				if (code != 200) return
 				var integrations = parseJSON(body)
 				if (!integrations || !integrations.length) return
