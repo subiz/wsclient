@@ -48,7 +48,7 @@ function WebRTCConn(options) {
 
 		peer.onicecandidate = (event) => {
 			if (!event.candidate) return
-			let url = `${apiUrl}ice-candidates?x-access-token=${access_token}&connection_id=${connId}`
+			let url = `${apiUrl}ice-candidates?x-access-token=${access_token}&connection_id=${connId}&account_id=${accid}`
 			callAPI('post', url, jsonify(event.candidate))
 		}
 
@@ -86,7 +86,7 @@ function WebRTCConn(options) {
 	}
 
 	let syncCallWithServer = () => {
-		let url = `${apiUrl}calls?x-access-token=${access_token}`
+		let url = `${apiUrl}calls?x-access-token=${access_token}&account_id=${accid}`
 		callAPI('get', url, undefined, function (body, code) {
 			if (code != 200) return
 			body = parseJSON(body) || []
@@ -297,7 +297,7 @@ function WebRTCConn(options) {
 				})
 				.then((answer) =>
 					peer.setLocalDescription(answer).then(() => {
-						let url = `${apiUrl}finish?x-access-token=${access_token}&connection_id=${connId}&version=2&negotiation_id=${negid}`
+						let url = `${apiUrl}finish?x-access-token=${access_token}&connection_id=${connId}&version=2&negotiation_id=${negid}&account_id=${accid}`
 						callAPI('post', url, jsonify(answer), function (body, code) {
 							if (code !== 200) {
 								logError(accid, agid, body, 'finish:295')
@@ -365,7 +365,7 @@ function WebRTCConn(options) {
 							return rs({error: err})
 						}
 
-						let url = `${apiUrl}call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${number}&from_number=${fromnumber}`
+						let url = `${apiUrl}call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${number}&from_number=${fromnumber}&account_id=${accid}`
 						if (outboundcallentryid) url += `&outbound_call_entry_id=${outboundcallentryid}`
 						if (campaignid) url += `&campaign_id=${campaignid}`
 						callAPI('post', url, undefined, (body, code) => {
@@ -404,13 +404,13 @@ function WebRTCConn(options) {
 		call.hangup_code = 'cancel'
 		call.ended = env.Date.now()
 		publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
-		callAPI('post', `${apiUrl}hangup?x-access-token=${access_token}&call_id=${callid}`)
+		callAPI('post', `${apiUrl}hangup?x-access-token=${access_token}&call_id=${callid}&account_id=${accid}`)
 	}
 
 	this.listenCall = (callid, cb) => {
 		let start = env.Date.now()
 		initSession((err, connId) => {
-			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
+			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&account_id=${accid}`
 			callAPI('post', url, undefined, (body, code) => {
 				if (code != 200) logError(accid, agid, body, 'listenCall:399')
 				collect('listen_call', callid, env.Date.now() - start)
@@ -424,7 +424,7 @@ function WebRTCConn(options) {
 		initSession((err, connId) => {
 			call2Connection[callid] = connId
 			streams[connId] = stream
-			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&talk=true`
+			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&talk=true&account_id={accid}`
 			callAPI('post', url, undefined, (body, code) => {
 				if (code != 200) logError(accid, agid, body, 'joinCall:413')
 				collect('join_call', callid, env.Date.now() - start)
@@ -449,7 +449,7 @@ function WebRTCConn(options) {
 					publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
 					return rs({error: err})
 				}
-				let url = `${apiUrl}answer?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}`
+				let url = `${apiUrl}answer?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&account_id=${accid}`
 				callAPI('post', url, undefined, (body, code) => {
 					body = parseJSON(body)
 					if (code != 200) {
@@ -470,7 +470,7 @@ function WebRTCConn(options) {
 			if (!callid) return rs({body: {}})
 			let connId = call2Connection[callid]
 			if (!connId) return rs({body: {}})
-			let url = `${apiUrl}dtml?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&key={key}`
+			let url = `${apiUrl}dtml?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&key={key}&account_id=${accid}`
 			initSession(() =>
 				callAPI('post', url, undefined, (body, code) => {
 					if (code != 200) logError(accid, agid, body, 'sendDtmf:463')
@@ -485,7 +485,7 @@ function WebRTCConn(options) {
 			if (!callid) return rs({})
 			let connId = call2Connection[callid]
 			if (!connId) return rs({body: {}})
-			let url = `${apiUrl}refer?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number={tonumber}`
+			let url = `${apiUrl}refer?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number={tonumber}&account_id=${accid}`
 			initSession(() =>
 				callAPI('post', url, undefined, (body, code) => {
 					if (code != 200) logError(accid, agid, body, 'transferCall:478')

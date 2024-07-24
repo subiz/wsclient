@@ -14,18 +14,18 @@ var {xhrsend, parseJSON, Pubsub} = require('./common.js')
 //
 // Once dead, onDead will be called. After that, the connection is
 // useless, all resources will be released.
-function Conn(apiUrl, credential, onDead, onEvents, callAPI) {
+function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 	callAPI = callAPI || xhrsend // allow hook
 	credential = credential || {}
 	// tell if connection is dead
 	var dead = false
 
 	var lastToken = ''
-
 	// kill force the connection to dead state
 	this.kill = function () {
 		dead = true
 	}
+	if (!accid) accid = ''
 
 	// long polling loop, polling will run sequentialy. Each polling will start right
 	// after the previous returned. In case of error, polling loop will pause based on
@@ -34,7 +34,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI) {
 	// the polling loop starts after the first subscribe call finished successfully
 	var polling = function (backoff) {
 		if (dead) return
-		callAPI('get', apiUrl + 'poll?token=' + lastToken, undefined, function (body, code) {
+		callAPI('get', apiUrl + 'poll?token=' + lastToken + '&account_id=' + accid, undefined, function (body, code) {
 			if (dead) return
 			if (retryable(code)) return setTimeout(polling, calcNextBackoff(backoff), backoff + 1)
 			if (code !== 200) {
@@ -66,16 +66,12 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI) {
 				return new Promise(function (rs) {
 					var query = '?token=' + lastToken
 					credential.getAccessToken().then(function (access_token) {
-						if (credential.user_ref)
-							query +=
-								'&user_ref=' +
-								encodeURIComponent(credential.user_ref) +
-								'&account_id=' +
-								encodeURIComponent(credential.account_id)
+						if (credential.user_ref) query += '&user_ref=' + encodeURIComponent(credential.user_ref)
 						else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
 						else if (access_token) query += '&access-token=' + access_token
 
-						callAPI('post', apiUrl + 'subs' + query, JSON.stringify({events: events}), function (body, code) {
+						let fullurl = apiUrl + 'subs' + query + '&account_id=' + encodeURIComponent(accid || credential.account_id)
+						callAPI('post', fullurl, JSON.stringify({events: events}), function (body, code) {
 							if (dead) {
 								out = repeat('dead', events.length)
 								return rs(false) // break loop
@@ -126,7 +122,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI) {
 // additional features compare to conn:
 //   + auto recreate and resub if the last conn is dead
 //   + don't subscribe already subscribed events
-function Realtime(apiUrls, credential, callAPI) {
+function Realtime(apiUrls, credential, callAPI, accid) {
 	if (typeof apiUrls === 'string' || apiUrls instanceof String) apiUrls = [apiUrls]
 	credential = credential || {}
 	if (!credential.getAccessToken) {
@@ -134,7 +130,7 @@ function Realtime(apiUrls, credential, callAPI) {
 			return Promise.resolve('')
 		}
 	}
-
+	if (!accid) accid = credential.account_id || ''
 	var pubsub = new Pubsub()
 
 	// holds all topics that realtime must subscribed
@@ -148,9 +144,10 @@ function Realtime(apiUrls, credential, callAPI) {
 	// stop the connection
 	var stop = false
 	this.stop = function () {
-		if (stop) return
+		if (!conn || stop) return
 		stop = true
 		conn.kill()
+		pubsub.emit('interrupted')
 	}
 
 	this.onEvent = function (cb) {
@@ -204,6 +201,7 @@ function Realtime(apiUrls, credential, callAPI) {
 				for (var i = 0; i < topics.length; i++) pubsub.emit('event', topics[i])
 			},
 			callAPI,
+			accid,
 		)
 
 		// resubscribe all subscribed events
