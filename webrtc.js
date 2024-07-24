@@ -424,7 +424,7 @@ function WebRTCConn(options) {
 		initSession((err, connId) => {
 			call2Connection[callid] = connId
 			streams[connId] = stream
-			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&talk=true&account_id={accid}`
+			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&talk=true&account_id=${accid}`
 			callAPI('post', url, undefined, (body, code) => {
 				if (code != 200) logError(accid, agid, body, 'joinCall:413')
 				collect('join_call', callid, env.Date.now() - start)
