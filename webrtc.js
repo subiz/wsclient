@@ -5,7 +5,7 @@ const servers = {
 }
 
 // let connId = 'webrtc' + randomString(20)
-// env = {RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, setTimeout, setInterval, jsonify, parseJSON}
+// env = {RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, setTimeout, setInterval, clearInterval, jsonify, parseJSON}
 // set env._is_webrtc_local to true for local testing
 function WebRTCConn(options) {
 	let {apiUrl, access_token, accid, agid, realtime, callAPI, env, onTrack, onEvent, collect} = options
@@ -15,6 +15,7 @@ function WebRTCConn(options) {
 		if (env._is_webrtc_local) apiUrl = 'http://localhost:8008/'
 	}
 
+	dead = false
 	callAPI = callAPI || xhrsend // allow hook
 	let parseJSON = (str) => {
 		try {
@@ -48,6 +49,7 @@ function WebRTCConn(options) {
 
 		peer.onicecandidate = (event) => {
 			if (!event.candidate) return
+			if (dead) return
 			let url = `${apiUrl}ice-candidates?x-access-token=${access_token}&connection_id=${connId}&account_id=${accid}`
 			callAPI('post', url, jsonify(event.candidate))
 		}
@@ -86,6 +88,7 @@ function WebRTCConn(options) {
 	}
 
 	let syncCallWithServer = () => {
+		if (dead) return env.clearInterval(_syncCallInterval)
 		let url = `${apiUrl}calls?x-access-token=${access_token}&account_id=${accid}`
 		callAPI('get', url, undefined, function (body, code) {
 			if (code != 200) return
@@ -141,9 +144,10 @@ function WebRTCConn(options) {
 		})
 	}
 	syncCallWithServer()
-	env.setInterval(syncCallWithServer, 10000)
+	let _syncCallInterval = env.setInterval(syncCallWithServer, 10000)
 
 	let cleanEndedCall = () => {
+		if (dead) return env.clearInterval(_endcalInterval)
 		Object.keys(endRequest).map((callid) => {
 			if (env.Date.now() - endRequest[callid] > 60000) delete endRequest[callid]
 		})
@@ -166,7 +170,7 @@ function WebRTCConn(options) {
 			if (env.Date.now() - call.ended > 60000) delete call2Connection[callid]
 		})
 	}
-	env.setInterval(cleanEndedCall, 120000)
+	let _endcalInterval = env.setInterval(cleanEndedCall, 120000)
 
 	let endcallCb = {}
 	let publish = (ev) => {
@@ -195,6 +199,10 @@ function WebRTCConn(options) {
 		if (direction == 'incoming') ev.data.call_info.direction = 'inbound'
 		if (direction == 'outgoing') ev.data.call_info.direction = 'outbound'
 		onEvent && onEvent(ev)
+	}
+
+	this.shutdown = () => {
+		dead = true
 	}
 
 	this.matchCall = (callid) => {
@@ -252,6 +260,7 @@ function WebRTCConn(options) {
 	}
 
 	realtime.onEvent((ev) => {
+		if (dead) return
 		if (!ev || !ev.type || !ev.data) return
 		if (env._is_webrtc_local && ev.user_id != '8') return // local
 		if (!env._is_webrtc_local && ev.user_id != '9') return // prod
