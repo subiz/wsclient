@@ -34,7 +34,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 	// the polling loop starts after the first subscribe call finished successfully
 	var polling = function (backoff) {
 		if (dead) return
-		callAPI('get', apiUrl + 'poll?token=' + lastToken + '&account_id=' + accid, undefined, function (body, code) {
+		callAPI('get', apiUrl + 'poll?token=' + lastToken + '&account-id=' + accid, undefined, function (body, code) {
 			if (dead) return
 			if (retryable(code)) return setTimeout(polling, calcNextBackoff(backoff), backoff + 1)
 			if (code !== 200) {
@@ -70,7 +70,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 						else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
 						else if (access_token) query += '&access-token=' + access_token
 
-						let fullurl = apiUrl + 'subs' + query + '&account_id=' + encodeURIComponent(accid || credential.account_id)
+						let fullurl = apiUrl + 'subs' + query + '&account-id=' + encodeURIComponent(accid || credential.account_id)
 						callAPI('post', fullurl, JSON.stringify({events: events}), function (body, code) {
 							if (dead) {
 								out = repeat('dead', events.length)
