@@ -64,8 +64,8 @@ var xhrsend = function (method, url, body, cb) {
 	request.send(body)
 }
 
-// JSON.parse without exeption
-// return undefined when parsing invalid JSON string
+// JSON.parse without exception
+// return undefined when input is an invalid JSON
 function parseJSON(str) {
 	try {
 		return JSON.parse(str)

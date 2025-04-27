@@ -17,174 +17,164 @@ var {xhrsend, parseJSON, Pubsub} = require('./common.js')
 function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 	callAPI = callAPI || xhrsend // allow hook
 	credential = credential || {}
-	// tell if connection is dead
 
 	var lastToken = ''
 	if (!accid) accid = ''
 
-	var status = 'active' // active | polling (trouble while polling) | subbing (trouble while subscribing) | dead
+	var is_dead = false // tell if the connection is dead
+	var is_polling_stuck = false // tell if we've having trouble doing /poll
+	var is_sub_stuck = false // tell if we've having trouble doing /subscribe
 
 	// The long polling loop runs sequentially, with each poll starting immediately
 	// after the previous one completes. If an error occurs, the loop will pause
 	// using an exponential backoff strategy. It will terminate if an unretryable
-	// error is encountered. The polling loop begins after the first subscription
-	// call completes successfully
+	// error is encountered.
+	// The first loop begins after the first subscription call completes successfully
 	var polling = function (backoff) {
-		if (status == 'dead') return
+		if (is_dead) return
 		callAPI('get', apiUrl + 'poll?token=' + lastToken + '&account-id=' + accid, undefined, function (body, code) {
-			if (status == 'dead') return
-
+			if (is_dead) return
 			if (retryable(code)) {
-				if (status == 'active') status = 'polling'
+				is_polling_stuck = true
 				return setTimeout(polling, calcNextBackoff(backoff), backoff + 1)
 			}
 
 			if (code !== 200) {
 				// unretryable error, should kill
-				status = 'dead'
-				return onDead('poll')
+				is_polling_stuck = true
+				return kill('poll')
 			}
 
-			if (status == 'polling') status = 'active'
 			// 200, success
+			is_polling_stuck = false
 			body = parseJSON(body) || {}
 			if (body.host) apiUrl = absUrl(body.host)
 
 			var seqToken = body.sequential_token
 			// the server returns a malform payload. We should end
-			if (!seqToken) {
-				status = 'dead'
-				return onDead('poll')
-			}
+			if (!seqToken) return kill('poll')
 			lastToken = seqToken
 			onEvents(body.events || [])
 			return polling(0)
 		})
 	}
 
-	var subQueue = flow.batch(50, 100, function (events) {
-		if (status == 'dead') return repeat('dead', events.length)
-		if (events.length <= 0) return []
+	var subQueue = flow.batch(50, 100, function (topics) {
+		if (is_dead) return Promise.resolve(repeat('dead', topics.length))
+		if (topics.length <= 0) return Promise.resolve([])
+
+		var resolve
+		var promise = new Promise((rs) => {
+			resolve = rs
+		})
 
 		var done = false
-		setTimeout(() => {
-			if (done) return
-			if (status == 'dead') return
-			if (status == 'active') status = 'subbing'
+		setTimeout(function () {
+			if (!done && !is_dead) is_sub_stuck = true
 		}, 4000)
 
 		setTimeout(() => {
 			// too long, kill
 			if (done) return
 			done = true
-			if (status == 'dead') return
-			status = 'dead' // mark as dead
-			onDead('poll')
-			out = repeat('dead', events.length)
-			resolve(false) // break loop
+			resolve(repeat('dead', topics.length))
+			if (is_dead) return
+			kill('subs')
 		}, 60000)
 
-		var resolve
-		var promise = new Promise((rs) => {
-			resolve = rs
-		})
-		var out = []
-		flow
-			.loop(function () {
-				return new Promise(function (rs) {
-					if (status == 'dead') {
-						out = repeat('dead', events.length)
+		flow.loop(function () {
+			return new Promise(function (rs) {
+				if (is_dead) {
+					resolve(repeat('dead', topics.length))
+					return rs(false) // break loop
+				}
+
+				var query = '?token=' + lastToken
+				credential.getAccessToken().then(function (access_token) {
+					if (is_dead) {
+						resolve(repeat('dead', topics.length))
 						return rs(false) // break loop
 					}
 
-					var query = '?token=' + lastToken
-					credential.getAccessToken().then(function (access_token) {
-						if (status == 'dead') {
-							out = repeat('dead', events.length)
+					if (credential.user_ref) query += '&user_ref=' + encodeURIComponent(credential.user_ref)
+					else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
+					else if (access_token) query += '&access-token=' + access_token
+
+					var fullurl = apiUrl + 'subs' + query + '&account-id=' + encodeURIComponent(accid || credential.account_id)
+					callAPI('post', fullurl, JSON.stringify({events: topics}), function (body, code) {
+						if (done) return
+						if (is_dead) {
+							resolve(repeat('dead', topics.length))
 							return rs(false) // break loop
 						}
 
-						if (credential.user_ref) query += '&user_ref=' + encodeURIComponent(credential.user_ref)
-						else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
-						else if (access_token) query += '&access-token=' + access_token
+						if (retryable(code)) {
+							is_sub_stuck = true
+							return setTimeout(rs, 3000, true)
+						}
 
-						var fullurl = apiUrl + 'subs' + query + '&account-id=' + encodeURIComponent(accid || credential.account_id)
-						callAPI('post', fullurl, JSON.stringify({events: events}), function (body, code) {
-							if (done) return
-							if (status == 'subbing') status = 'active'
-
-							if (status == 'dead') {
-								out = repeat('dead', events.length)
-								return rs(false) // break loop
-							}
-
-							if (retryable(code)) {
-								status = 'subbing'
-								return setTimeout(rs, 3000, true)
-							}
-
-							// unretryable error
-							if (code !== 200) {
-								// we are unable to start the communication with the realtime server.
-								// Must notify the user by killing the connection
-								status = 'dead'
-								onDead('subscribe', body, code)
-								out = repeat('dead', events.length)
-								return rs(false)
-							}
-
-							done = true
-							if (lastToken) return rs(false)
-
-							// first time sub, should grab the initial token
-							body = parseJSON(body) || {}
-							var initialToken = body.initial_token
-							// the server returns a malform payload. We should end
-							if (!initialToken) {
-								status = 'dead'
-								onDead('subscribe', body, code)
-								out = repeat('dead', events.length)
-								return rs(false) // break loop
-							}
-
-							if (body.host) apiUrl = absUrl(body.host)
-
-							lastToken = initialToken
-							polling(0)
+						// unretryable error
+						if (code !== 200) {
+							// we are unable to start the communication with the realtime server.
+							// Must notify the user by killing the connection
+							kill('subs')
+							resolve(repeat('dead', topics.length))
 							return rs(false)
-						})
+						}
+						is_sub_stuck = false
+						done = true
+						if (lastToken) {
+							resolve(topics)
+							return rs(false)
+						}
+
+						// first time sub, should grab the initial token
+						body = parseJSON(body) || {}
+						var initialToken = body.initial_token
+						// the server returns a malform payload. We should end
+						if (!initialToken) {
+							kill('subs')
+							resolve(repeat('dead', topics.length))
+							return rs(false) // break loop
+						}
+
+						// learn new host
+						if (body.host) apiUrl = absUrl(body.host)
+
+						lastToken = initialToken
+						polling(0)
+						resolve(topics)
+						return rs(false) // to break the loop
 					})
 				})
 			})
-			.then(function () {
-				resolve(out)
-			})
+		})
+
 		return promise
 	})
 
 	// subscribe call /subs API to tell server that we are listening for those events
 	// this function may start polling loop if it hasn't been started yet
-	// Note: this function is not design to be thread safed so, do not call this
-	// function multiple times at once
+	// its safe to call this function multiple times
 	this.subscribe = subQueue.push.bind(subQueue)
 
 	this.getStatus = function () {
-		if (status == 'dead' || status == 'active') return status
-		return 'connecting'
+		if (is_dead) return 'dead'
+		if (is_sub_stuck || is_polling_stuck) return 'connecting'
+		return 'active'
 	}
 
 	// kill force the connection to dead state
-	this.kill = function () {
-		status = 'dead'
+	var kill = function (reason) {
+		is_dead = true
+		onDead(reason)
 	}
+	this.kill = kill
 }
 
-// Realtime is just a stronger Conn.
-// This class helps you subscribe and listen realtime event from the
+// Realtime helps you subscribe and listen realtime event from th
 // realtime server
-// additional features compare to conn:
-//   + auto recreate and resub if the last conn is dead
-//   + don't subscribe already subscribed events
+// Realtime is just a stronger Conn.
 function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 	if (typeof apiUrls === 'string' || apiUrls instanceof String) apiUrls = [apiUrls]
 	credential = credential || {}
@@ -197,19 +187,13 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 	var pubsub = new Pubsub()
 
 	// holds all topics that realtime must subscribed
-	// {
-	//   a: 'online',
-	//   b: 'offline',
-	//   c: 'connecting',
-	// }
 	var topics = {}
 
 	// stop the connection
-	var stop = false
 	this.stop = function () {
-		if (!conn || stop) return
-		stop = true
+		if (!conn) return
 		conn.kill()
+		conn = undefined
 		pubsub.emit('interrupted')
 	}
 
@@ -226,9 +210,8 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 		return conn.getStatus()
 	}
 
-	var conn
 	this.subscribe = function (events) {
-		if (stop) return Promise.resolve({})
+		if (!conn) return Promise.resolve({error: 'dead'})
 		if (typeof events === 'string') events = [events]
 		if (!Array.isArray(events)) return Promise.resolve({error: 'param should be an array or string'})
 
@@ -237,48 +220,44 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 		for (var i = 0; i < events.length; i++) {
 			var topic = events[i]
 			if (!topic) continue
-			if (!topics[topic]) {
-				topics[topic] = true
-				all.push(conn.subscribe(topic))
-			}
+			if (topics[topic]) continue
+			topics[topic] = true // mark so next time we wont subscribe this event (topic) again
+			all.push(conn.subscribe(topic))
 		}
 		if (all.length === 0) return Promise.resolve({})
-
-		return Promise.all(all).then(function (errs) {
-			for (var i = 0; i < errs.length; i++) if (errs[i]) return {error: errs[i]}
-			for (var j = 0; j < events.length; j++) topics[events[j]] = true
+		return Promise.all(all).then(function () {
+			if (!conn || conn.getStatus() == 'dead') return {error: 'dead'}
 			return {}
 		})
 	}
 
 	// reconnect make sure there is alway a Conn running in the background
 	// if the Conn is dead, it recreate a new one
+	var conn
 	this.reconnect = function () {
-		if (stop) return Promise.resolve(false)
-		// reset subscribed topic
-		var allTopics = Object.keys(topics)
-		for (var i = 0; i < allTopics.length; i++) topics[allTopics[i]] = false
 		var randomUrl = apiUrls[Math.floor(Math.random() * apiUrls.length)]
 		if (conn) conn.kill() // kill old connection
-		conn = new Conn(
+		let myconn = new Conn(
 			randomUrl,
 			credential,
 			function (code, body, status) {
-				if (stop) return
+				if (myconn != conn) return // outdated
 				pubsub.emit('interrupted', code, body, status)
 				if (!skipautoreconnect) setTimeout(this.reconnect, 2000) // reconnect and resubscribe after 2 sec
 			},
 			function (events) {
-				if (stop) return
+				if (myconn != conn) return
 				for (var i = 0; i < events.length; i++) pubsub.emit('event', events[i])
 			},
 			callAPI,
 			accid,
 		)
+		conn = myconn
 
+		var copyTopics = Object.keys(topics)
+		topics = {}
 		// resubscribe all subscribed events
-		var topicKeys = Object.keys(topics)
-		return this.subscribe(topicKeys)
+		return this.subscribe(copyTopics)
 	}
 	this.reconnect()
 }

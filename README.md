@@ -1,27 +1,30 @@
-# Subiz rtclient
+# Subiz wsclient
 
 This library implements subiz long polling protocol
 
 ## Method
+
 ### subscribe
-### onEvents
-### onInterrupted
+
+### onEvent
+
 ### stop
 
 ## Example
-```
+
+```js
 var Realtime = require('@subiz/wsclient')
 var realtime = new Realtime('https://realtime-0.subiz.net/', {
-  account_id: 'ac1234',
-  getAccessToken:()=> '333344',
-  user_mask: 'mask123'
+	account_id: 'ac1234',
+	getAccessToken: () => '333344',
+	user_mask: 'mask123',
 })
 
-realtime.onEvent(ev => console.log(ev))
-realtime.onInterrupted(() => console.log('some message may have been losted'))
+realtime.onEvent((ev) => console.log(ev))
 
 // subscribe events
-realtime.subscribe([ev1, ev2, ev3])
+await realtime.subscribe(['message_sent', 'user_info_updated'])
+console.log(realtime.getStatus()) // 'active'
 
 realtime.stop()
 ```

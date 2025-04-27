@@ -81,7 +81,7 @@ async function testScript(t, script) {
 				break
 			}
 
-			t.true(!istimeout, JSON.stringify(step))
+			t.true(!istimeout, script.name + ' ' + stepi + ' ' + JSON.stringify(step))
 			continue
 		}
 
@@ -119,7 +119,6 @@ test.only('realtime', async (t) => {
 				{type: 'subscribe', topics: ['message_sent']},
 				{type: 'status', status: 'active'},
 				{type: 'call', call_id: '1', path: '/subs', method: 'post', body: {events: ['message_sent']}},
-
 				{type: 'wait', timeout: 5000},
 				{type: 'status', status: 'connecting'},
 				{type: 'wait', timeout: 60000},
