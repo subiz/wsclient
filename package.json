@@ -1,6 +1,6 @@
 {
 	"name": "@subiz/wsclient",
-	"version": "4.0.31",
+	"version": "4.0.32",
 	"main": "realtime.js",
 	"scripts": {
 		"dev": "vite",

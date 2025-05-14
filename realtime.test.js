@@ -11,7 +11,7 @@ async function testScript(t, script) {
 			calls.push({method, url, body, cb})
 		},
 		'acctest',
-		true,
+		!script.auto_reconnect,
 	)
 	realtime.onEvent((ev) => events.push(ev))
 
@@ -100,7 +100,6 @@ async function testScript(t, script) {
 		}
 		t.true(false, script.name + '[' + stepi + ']=' + step.type)
 	}
-
 	// check events
 	let scriptevents = script.events || []
 	t.equal(events.length, scriptevents.length)
@@ -278,11 +277,59 @@ test.only('realtime', async (t) => {
 				{type: 'status', status: 'active'},
 			],
 		},
+		{
+			name: 'reconect while poll',
+			steps: [
+				{type: 'subscribe', topics: ['message_sent']},
+				{type: 'call', call_id: 1, path: '/subs'},
+				{type: 'response', call_id: '1', body: {initial_token: 'token1'}, code: 200},
+				{type: 'call', call_id: '2', path: '/poll', query: {token: 'token1'}, method: 'get'},
+				{type: 'status', status: 'active'},
+				{type: 'wait', timeout: 1000},
+				{type: 'response', call_id: '2', body: {events: [{text: 'xin chao'}], sequential_token: 'token2'}, code: 200},
+				{type: 'call', call_id: '3', path: '/poll', query: {token: 'token2'}, method: 'get'},
+				{type: 'response', call_id: '3', body: '400 dead', code: 400},
+				{type: 'status', status: 'dead'},
+				{type: 'reconnect'},
+				{type: 'wait', timeout: 1000},
+				{type: 'call', call_id: 4, path: '/subs'},
+				{type: 'wait', timeout: 1000},
+				{type: 'response', call_id: 4, body: {initial_token: 'token1'}, code: 200},
+				{type: 'status', status: 'active'},
+			],
+			events: [{text: 'xin chao'}],
+		},
+		{
+			name: 'resub',
+			auto_reconnect: true,
+			steps: [
+				{type: 'subscribe', topics: ['message_sent']},
+				{type: 'call', call_id: 1, path: '/subs'},
+				{type: 'response', call_id: '1', body: 'wait a sec', code: 500},
+				{type: 'status', status: 'connecting'},
+				{type: 'wait', timeout: 1000},
+				{type: 'call', call_id: 2, path: '/subs'},
+				{type: 'wait', timeout: 61000},
+				{type: 'status', status: 'connecting'},
+				{type: 'call', call_id: 3, path: '/subs'},
+				{type: 'wait', timeout: 1000},
+				{type: 'response', call_id: '3', body: 'wait a sec', code: 500},
+				{type: 'status', status: 'connecting'},
+				{type: 'wait', timeout: 1000},
+				{type: 'call', call_id: 4, path: '/subs'},
+				{type: 'wait', timeout: 1000},
+				{type: 'response', call_id: '4', body: {initial_token: 'token1'}, code: 200},
+				{type: 'call', call_id: '5', path: '/poll', query: {token: 'token1'}, method: 'get'},
+				{type: 'status', status: 'active'},
+				{type: 'response', call_id: '5', body: {events: [{text: 'xin chao'}], sequential_token: 'token2'}, code: 200},
+			],
+			events: [{text: 'xin chao'}],
+		},
 	]
 
 	let ps = []
 	for (const script of scripts) {
-		// if (script.name != 'double subscribe -> do nothing') continue
+		if (script.name != 'resub') continue
 		ps.push(testScript(t, script))
 	}
 	await Promise.all(ps)

@@ -17,13 +17,11 @@ var {xhrsend, parseJSON, Pubsub} = require('./common.js')
 function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 	callAPI = callAPI || xhrsend // allow hook
 	credential = credential || {}
-
 	var lastToken = ''
 	if (!accid) accid = ''
-
 	var is_dead = false // tell if the connection is dead
 	var is_polling_stuck = false // tell if we've having trouble doing /poll
-	var is_sub_stuck = false // tell if we've having trouble doing /subscribe
+	var is_sub_stuck = true // tell if we've having trouble doing /subscribe
 
 	// The long polling loop runs sequentially, with each poll starting immediately
 	// after the previous one completes. If an error occurs, the loop will pause
@@ -77,6 +75,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 			// too long, kill
 			if (done) return
 			done = true
+			is_sub_stuck = true
 			resolve(repeat('dead', topics.length))
 			if (is_dead) return
 			kill('subs')
@@ -210,7 +209,7 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 		return conn.getStatus()
 	}
 
-	this.subscribe = function (events) {
+	var subscribe = function (events) {
 		if (!conn) return Promise.resolve({error: 'dead'})
 		if (typeof events === 'string') events = [events]
 		if (!Array.isArray(events)) return Promise.resolve({error: 'param should be an array or string'})
@@ -230,11 +229,12 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 			return {}
 		})
 	}
+	this.subscribe = subscribe
 
 	// reconnect make sure there is alway a Conn running in the background
 	// if the Conn is dead, it recreate a new one
 	var conn
-	this.reconnect = function () {
+	let reconnect = function () {
 		var randomUrl = apiUrls[Math.floor(Math.random() * apiUrls.length)]
 		if (conn) conn.kill() // kill old connection
 		let myconn = new Conn(
@@ -242,8 +242,9 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 			credential,
 			function (code, body, status) {
 				if (myconn != conn) return // outdated
+				conn = undefined // prevent dupplicate dead fire
 				pubsub.emit('interrupted', code, body, status)
-				if (!skipautoreconnect) setTimeout(this.reconnect, 2000) // reconnect and resubscribe after 2 sec
+				if (!skipautoreconnect) setTimeout(reconnect, 2000) // reconnect and resubscribe after 2 sec
 			},
 			function (events) {
 				if (myconn != conn) return
@@ -253,13 +254,13 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 			accid,
 		)
 		conn = myconn
-
 		var copyTopics = Object.keys(topics)
 		topics = {}
 		// resubscribe all subscribed events
-		return this.subscribe(copyTopics)
+		return subscribe(copyTopics)
 	}
-	this.reconnect()
+	this.reconnect = reconnect
+	reconnect()
 }
 
 // calcNextBackoff returns number of seconds we must wait
