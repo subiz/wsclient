@@ -30,7 +30,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 	// The first loop begins after the first subscription call completes successfully
 	var polling = function (backoff) {
 		if (is_dead) return
-		callAPI('get', apiUrl + 'poll?token=' + lastToken + '&account-id=' + accid, undefined, function (body, code) {
+		callAPI('get', apiUrl + 'poll?token=' + lastToken + '&v=5&account-id=' + accid, undefined, function (body, code) {
 			if (is_dead) return
 			if (retryable(code)) {
 				is_polling_stuck = true
@@ -99,7 +99,8 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 					else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
 					else if (access_token) query += '&access-token=' + access_token
 
-					var fullurl = apiUrl + 'subs' + query + '&account-id=' + encodeURIComponent(accid || credential.account_id)
+					var fullurl =
+						apiUrl + 'subs' + query + '&v=5&account-id=' + encodeURIComponent(accid || credential.account_id)
 					callAPI('post', fullurl, JSON.stringify({events: topics}), function (body, code) {
 						if (done) return
 						if (is_dead) {
@@ -234,14 +235,14 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 	// reconnect make sure there is alway a Conn running in the background
 	// if the Conn is dead, it recreate a new one
 	var conn
-	let reconnect = function () {
+	var reconnect = function () {
 		var randomUrl = apiUrls[Math.floor(Math.random() * apiUrls.length)]
 		if (conn) conn.kill() // kill old connection
-		let myconn = new Conn(
+		var myconn = new Conn(
 			randomUrl,
 			credential,
 			function (code, body, status) {
-				if (myconn != conn) return // outdated
+				if (conn === undefined || myconn != conn) return // outdated
 				conn = undefined // prevent dupplicate dead fire
 				pubsub.emit('interrupted', code, body, status)
 				if (!skipautoreconnect) setTimeout(reconnect, 2000) // reconnect and resubscribe after 2 sec

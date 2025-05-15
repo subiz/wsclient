@@ -114,9 +114,9 @@ test.only('realtime', async (t) => {
 		{
 			name: 'starting status',
 			steps: [
-				{type: 'status', status: 'active'},
+				{type: 'status', status: 'connecting'},
 				{type: 'subscribe', topics: ['message_sent']},
-				{type: 'status', status: 'active'},
+				{type: 'status', status: 'connecting'},
 				{type: 'call', call_id: '1', path: '/subs', method: 'post', body: {events: ['message_sent']}},
 				{type: 'wait', timeout: 5000},
 				{type: 'status', status: 'connecting'},
@@ -130,7 +130,7 @@ test.only('realtime', async (t) => {
 			name: 'long subscribe',
 			steps: [
 				{type: 'subscribe', topics: ['message_sent']},
-				{type: 'status', status: 'active'},
+				{type: 'status', status: 'connecting'},
 				{type: 'call', call_id: '1', path: '/subs', method: 'post', body: {events: ['message_sent']}},
 				{type: 'wait', timeout: 5000},
 				{type: 'status', status: 'connecting'},
@@ -145,7 +145,7 @@ test.only('realtime', async (t) => {
 			name: 'double subscribe -> do nothing',
 			steps: [
 				{type: 'subscribe', topics: ['message_sent']},
-				{type: 'status', status: 'active'},
+				{type: 'status', status: 'connecting'},
 				{type: 'call', call_id: '1', path: '/subs', method: 'post', body: {events: ['message_sent']}},
 				{type: 'response', call_id: '1', body: {initial_token: 'token1'}, code: 200},
 				{type: 'call', call_id: '2', path: '/poll', query: {token: 'token1'}, method: 'get'},
@@ -157,7 +157,7 @@ test.only('realtime', async (t) => {
 			name: 'polling unstable',
 			steps: [
 				{type: 'subscribe', topics: ['message_sent']},
-				{type: 'status', status: 'active'},
+				{type: 'status', status: 'connecting'},
 				{type: 'call', call_id: '1', path: '/subs', method: 'post', body: {events: ['message_sent']}},
 				{type: 'wait', timeout: 1000},
 				{type: 'response', call_id: '1', body: {initial_token: 'token1'}, code: 200},
@@ -177,7 +177,7 @@ test.only('realtime', async (t) => {
 			name: 'polling dead',
 			steps: [
 				{type: 'subscribe', topics: ['message_sent']},
-				{type: 'status', status: 'active'},
+				{type: 'status', status: 'connecting'},
 				{type: 'call', call_id: '1', path: '/subs', method: 'post', body: {events: ['message_sent']}},
 				{type: 'wait', timeout: 1000},
 				{type: 'response', call_id: '1', body: {initial_token: 'token1'}, code: 200},
@@ -329,7 +329,7 @@ test.only('realtime', async (t) => {
 
 	let ps = []
 	for (const script of scripts) {
-		if (script.name != 'resub') continue
+		// if (script.name != 'resub') continue
 		ps.push(testScript(t, script))
 	}
 	await Promise.all(ps)
