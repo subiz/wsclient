@@ -15,7 +15,7 @@ function WebRTCConn(options) {
 		if (env._is_webrtc_local) apiUrl = 'http://localhost:8008/'
 	}
 
-	dead = false
+	let dead = false
 	callAPI = callAPI || xhrsend // allow hook
 	let parseJSON = (str) => {
 		try {
