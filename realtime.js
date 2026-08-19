@@ -28,13 +28,24 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 	// using an exponential backoff strategy. It will terminate if an unretryable
 	// error is encountered.
 	// The first loop begins after the first subscription call completes successfully
+	var MIN_POLL_INTERVAL = 250 // max 4 req/s, in case the server returns instantly instead of holding the long poll
+	var last_poll_at = 0
+	var polling_started = false // make sure only one polling loop is running
+	var startPolling = function () {
+		if (polling_started) return
+		polling_started = true
+		polling(0)
+	}
 	var polling = function (backoff) {
 		if (is_dead) return
+		last_poll_at = Date.now()
 		callAPI('get', apiUrl + 'poll?token=' + lastToken + '&v=5&account-id=' + accid, undefined, function (body, code) {
 			if (is_dead) return
+			var wait = MIN_POLL_INTERVAL - (Date.now() - last_poll_at)
+			if (wait < 0) wait = 0
 			if (retryable(code)) {
 				is_polling_stuck = true
-				return setTimeout(polling, calcNextBackoff(backoff), backoff + 1)
+				return setTimeout(polling, Math.max(calcNextBackoff(backoff), wait), backoff + 1)
 			}
 
 			if (code !== 200) {
@@ -53,6 +64,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 			if (!seqToken) return kill('poll')
 			lastToken = seqToken
 			onEvents(body.events || [])
+			if (wait > 0) return setTimeout(polling, wait, 0)
 			return polling(0)
 		})
 	}
@@ -89,64 +101,73 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 				}
 
 				var query = '?token=' + lastToken
-				credential.getAccessToken().then(function (access_token) {
-					if (is_dead) {
-						resolve(repeat('dead', topics.length))
-						return rs(false) // break loop
-					}
-
-					if (credential.user_ref) query += '&user_ref=' + encodeURIComponent(credential.user_ref)
-					else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
-					else if (access_token) query += '&access-token=' + access_token
-
-					var fullurl =
-						apiUrl + 'subs' + query + '&v=5&account-id=' + encodeURIComponent(accid || credential.account_id)
-					callAPI('post', fullurl, JSON.stringify({events: topics}), function (body, code) {
-						if (done) return
+				Promise.resolve()
+					.then(function () {
+						return credential.getAccessToken()
+					})
+					.then(function (access_token) {
 						if (is_dead) {
 							resolve(repeat('dead', topics.length))
 							return rs(false) // break loop
 						}
 
-						if (retryable(code)) {
-							is_sub_stuck = true
-							return setTimeout(rs, 3000, true)
-						}
+						if (credential.user_ref) query += '&user_ref=' + encodeURIComponent(credential.user_ref)
+						else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
+						else if (access_token) query += '&access-token=' + access_token
 
-						// unretryable error
-						if (code !== 200) {
-							// we are unable to start the communication with the realtime server.
-							// Must notify the user by killing the connection
-							kill('subs')
-							resolve(repeat('dead', topics.length))
-							return rs(false)
-						}
-						is_sub_stuck = false
-						done = true
-						if (lastToken) {
+						var fullurl =
+							apiUrl + 'subs' + query + '&v=5&account-id=' + encodeURIComponent(accid || credential.account_id)
+						callAPI('post', fullurl, JSON.stringify({events: topics}), function (body, code) {
+							if (done) return
+							if (is_dead) {
+								resolve(repeat('dead', topics.length))
+								return rs(false) // break loop
+							}
+
+							if (retryable(code)) {
+								is_sub_stuck = true
+								return setTimeout(rs, 3000, true)
+							}
+
+							// unretryable error
+							if (code !== 200) {
+								// we are unable to start the communication with the realtime server.
+								// Must notify the user by killing the connection
+								kill('subs')
+								resolve(repeat('dead', topics.length))
+								return rs(false)
+							}
+							is_sub_stuck = false
+							done = true
+							if (lastToken) {
+								resolve(topics)
+								return rs(false)
+							}
+
+							// first time sub, should grab the initial token
+							body = parseJSON(body) || {}
+							var initialToken = body.initial_token
+							// the server returns a malform payload. We should end
+							if (!initialToken) {
+								kill('subs')
+								resolve(repeat('dead', topics.length))
+								return rs(false) // break loop
+							}
+
+							// learn new host
+							if (body.host) apiUrl = absUrl(body.host)
+
+							lastToken = initialToken
+							startPolling()
 							resolve(topics)
-							return rs(false)
-						}
-
-						// first time sub, should grab the initial token
-						body = parseJSON(body) || {}
-						var initialToken = body.initial_token
-						// the server returns a malform payload. We should end
-						if (!initialToken) {
-							kill('subs')
-							resolve(repeat('dead', topics.length))
-							return rs(false) // break loop
-						}
-
-						// learn new host
-						if (body.host) apiUrl = absUrl(body.host)
-
-						lastToken = initialToken
-						polling(0)
-						resolve(topics)
-						return rs(false) // to break the loop
+							return rs(false) // to break the loop
+						})
 					})
-				})
+					.catch(function () {
+						// getAccessToken failed, retry instead of hanging the loop
+						is_sub_stuck = true
+						setTimeout(rs, 3000, true)
+					})
 			})
 		})
 
@@ -192,8 +213,11 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 	// stop the connection
 	this.stop = function () {
 		if (!conn) return
-		conn.kill()
+		// detach before killing so onDead knows this is intentional and
+		// doesn't schedule a reconnect
+		var oldconn = conn
 		conn = undefined
+		oldconn.kill()
 		pubsub.emit('interrupted')
 	}
 
@@ -237,7 +261,14 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 	var conn
 	var reconnect = function () {
 		var randomUrl = apiUrls[Math.floor(Math.random() * apiUrls.length)]
-		if (conn) conn.kill() // kill old connection
+		if (conn) {
+			// detach before killing so the old conn's onDead doesn't
+			// schedule another reconnect (which would kill this new conn,
+			// schedule another one, and churn forever)
+			var oldconn = conn
+			conn = undefined
+			oldconn.kill()
+		}
 		var myconn = new Conn(
 			randomUrl,
 			credential,

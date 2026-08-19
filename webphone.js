@@ -52,6 +52,7 @@ function WebPhone(access_token, realtime) {
 		},
 		onTrack: function (event) {
 			if (event.track.kind != 'audio') return
+			if (!$audio) return
 			$audio.srcObject = event.streams[0]
 		},
 	})
@@ -100,8 +101,8 @@ function WebPhone(access_token, realtime) {
 
 	var me = this
 	this.isMicAllowed = function () {
-		return me.checkMic().then(function (out) {
-			return out.result
+		return me.checkMic().result.then(function (stream) {
+			return !!stream
 		})
 	}
 
@@ -117,7 +118,7 @@ function WebPhone(access_token, realtime) {
 		var microPermission = getMicroPermissions()
 		return {
 			timeout: Promise.race([timeout, microPermission]),
-			result: getMicroPermissions(),
+			result: microPermission,
 		}
 	}
 
@@ -142,8 +143,8 @@ function WebPhone(access_token, realtime) {
 			getMicroPermissions().then(function (stream) {
 				current_call_id = callid
 				webrtcconn.answerCall(callid, stream).then(function (out) {
-					if (out.error) return rs({error})
-					rs(body)
+					if (out.error) return rs({error: out.error})
+					rs(out.body)
 				})
 			})
 		})
@@ -163,7 +164,7 @@ function WebPhone(access_token, realtime) {
 			fromnumbers = _numbers
 		}
 
-		if (typeof fromnumbers === 'string' || fromnumbers instanceof String || typeof value === 'number') {
+		if (typeof fromnumbers === 'string' || fromnumbers instanceof String || typeof fromnumbers === 'number') {
 			fromnumbers = [fromnumbers + '']
 		}
 
@@ -176,7 +177,7 @@ function WebPhone(access_token, realtime) {
 
 		let callnumber = chooseCallNumber(fromnumbers, _state.called)
 		if (!callnumber)
-			return (
+			return Promise.resolve(
 				_state.last_result || {
 					start: Date.now(),
 					ended: Date.now(),
@@ -198,7 +199,7 @@ function WebPhone(access_token, realtime) {
 				if (!_state.called) _state.called = {}
 				_state.called[callnumber] = true
 				_state.last_result = out
-				return this.makeCall(number, fromnumbers, streamPm, _a, _b, _state)
+				return me.makeCall(number, fromnumbers, streamPm, _a, _b, _state)
 			}
 			return out
 		})
