@@ -42,7 +42,8 @@ realtime.stop()
   (returning a plain string also works). `user_ref` or `user_mask` are used
   instead of the access token when present.
 - `callAPI` (optional): custom HTTP function `(method, url, body, cb)` used
-  instead of the built-in XHR, mainly for testing.
+  instead of the built-in XHR, mainly for testing. It may return an `abort()`
+  handle or a cancellation function; the client calls it on timeout or stop.
 - `accid` (optional): account id, defaults to `credential.account_id`.
 - `skipautoreconnect` (optional): when true, the connection is not recreated
   automatically after it dies.
@@ -50,6 +51,18 @@ realtime.stop()
 The connection auto-reconnects 2 seconds after it dies and resubscribes all
 previously subscribed topics. Polling is throttled to at most 4 requests per
 second even if the server misbehaves and answers instantly.
+
+Each poll has a 105-second deadline, allowing for the server's 90-second hold.
+On timeout the client aborts the request and retries the same sequential token.
+Late responses are ignored. `stop()` and `reconnect()` abort pending requests
+and clear connection timers. Custom transports without cancellation support
+still have their late callbacks ignored. Fetch cancellation uses `AbortController`
+when available.
+
+Event and interruption listeners are isolated: a thrown exception or rejected
+Promise is reported through `console.error`, while other listeners and polling
+continue. Listener Promises are not awaited; delivery does not guarantee that
+an application's asynchronous processing has completed.
 
 ### Browser page exit
 

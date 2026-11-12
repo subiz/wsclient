@@ -15,6 +15,7 @@ function environment(options = {}) {
 	var calls = []
 	var beacons = []
 	var fetches = []
+	var errors = []
 	var browser = {
 		document: {},
 		navigator: {},
@@ -42,7 +43,7 @@ function environment(options = {}) {
 	if (options.fetch === 'missing') delete browser.fetch
 	if (options.browser === 'native') delete browser.document
 	var globals = {
-		console,
+		console: {error(...args) { errors.push(args) }},
 		URL,
 		Date: class extends Date {
 			static now() { return now }
@@ -95,7 +96,9 @@ function environment(options = {}) {
 	}
 	function create(credential = {account_id: 'ac-test'}, skipautoreconnect) {
 		return new Realtime('https://api.example.com/rts/0/', credential, (method, url, body, cb) => {
-			calls.push({method, url, body, cb})
+			var call = {method, url, body, cb, aborts: 0}
+			calls.push(call)
+			return {abort() { call.aborts++; cb('aborted', -1) }}
 		}, undefined, skipautoreconnect)
 	}
 	async function connect(credential, token = 'initial-token') {
@@ -107,7 +110,8 @@ function environment(options = {}) {
 		return realtime
 	}
 	return {
-		calls, beacons, fetches, tick, flush, take, create, connect,
+		calls, beacons, fetches, errors, tick, flush, take, create, connect,
+		timerCount() { return timers.size },
 		emit(type, event = {}) { for (var cb of [...(listeners.get(type) || [])]) cb(event) },
 		listenerCount() { return (listeners.get('pagehide') || new Set()).size },
 	}
@@ -252,4 +256,106 @@ test('visitor credentials preserve subscription precedence in cleanup', async ()
 		assert.equal(url.searchParams.get('user_ref'), credential.user_ref || null)
 		assert.equal(url.searchParams.get('user-mask'), credential.user_ref ? null : credential.user_mask)
 	}
+})
+
+test('throwing and rejecting listeners do not lose other events or stop polling', async () => {
+	var h = environment()
+	var rt = await h.connect()
+	var received = []
+	rt.onEvent(() => { throw new Error('broken listener') })
+	rt.onEvent(async () => { throw new Error('broken async listener') })
+	rt.onEvent((event) => received.push(event.id))
+	h.take('poll').cb(JSON.stringify({sequential_token: 'next', events: [{id: 1}, {id: 2}]}), 200)
+	await h.tick(250)
+	assert.deepEqual(received, [1, 2])
+	assert.equal(h.errors.length, 4)
+	assert.equal(new URL(h.take('poll').url).searchParams.get('token'), 'next')
+	assert.equal(rt.getStatus(), 'active')
+	rt.stop()
+})
+
+test('throwing interrupted listeners cannot prevent automatic reconnect', async () => {
+	var h = environment()
+	var rt = await h.connect()
+	var interruptions = 0
+	rt.onInterrupted(() => { throw new Error('broken listener') })
+	rt.onInterrupted(() => interruptions++)
+	h.take('poll').cb('dead', 400)
+	await h.tick(2100)
+	h.take('subs').cb(JSON.stringify({initial_token: 'reconnected'}), 200)
+	assert.equal(interruptions, 1)
+	assert.equal(h.errors.length, 1)
+	assert.equal(rt.getStatus(), 'active')
+	rt.stop()
+})
+
+test('poll deadline aborts once, retries the same token and ignores late responses', async () => {
+	var h = environment()
+	var rt = await h.connect()
+	var received = []
+	rt.onEvent((event) => received.push(event))
+	var hung = h.take('poll')
+	await h.tick(90000)
+	assert.equal(hung.aborts, 0, 'normal server hold is allowed')
+	await h.tick(15000)
+	assert.equal(hung.aborts, 1)
+	assert.equal(rt.getStatus(), 'connecting')
+	var retry = h.take('poll')
+	assert.equal(new URL(retry.url).searchParams.get('token'), 'initial-token')
+	hung.cb(JSON.stringify({sequential_token: 'stale', events: [{id: 'stale'}]}), 200)
+	assert.equal(received.length, 0)
+	retry.cb(JSON.stringify({sequential_token: 'recovered', events: [{id: 'ok'}]}), 200)
+	await h.tick(250)
+	assert.equal(received.length, 1)
+	assert.equal(rt.getStatus(), 'active')
+	assert.equal(new URL(h.take('poll').url).searchParams.get('token'), 'recovered')
+	rt.stop()
+	assert.equal(h.timerCount(), 0)
+})
+
+test('stop aborts in-flight requests and settles subscription promises immediately', async () => {
+	var h = environment()
+	var rt = await h.connect()
+	var poll = h.take('poll')
+	var pending = rt.subscribe('extra')
+	await h.tick(100)
+	var sub = h.take('subs')
+	rt.stop()
+	assert.equal((await pending).error, 'dead')
+	assert.equal(poll.aborts, 1)
+	assert.equal(sub.aborts, 1)
+	await h.flush()
+	assert.equal(h.timerCount(), 0)
+	var count = h.calls.length
+	await h.tick(300000)
+	assert.equal(h.calls.length, count)
+})
+
+test('reconnect aborts the old poll and rejects its late callback', async () => {
+	var h = environment()
+	var rt = await h.connect()
+	var oldPoll = h.take('poll')
+	var ready = rt.reconnect()
+	assert.equal(oldPoll.aborts, 1)
+	await h.tick(100)
+	h.take('subs').cb(JSON.stringify({initial_token: 'new'}), 200)
+	await ready
+	oldPoll.cb('late failure', 400)
+	assert.equal(new URL(h.take('poll').url).searchParams.get('token'), 'new')
+	assert.equal(rt.getStatus(), 'active')
+	rt.stop()
+})
+
+test('stop during credential refresh settles the subscription without sending later', async () => {
+	var h = environment()
+	var resolveCredential
+	var rt = h.create({getAccessToken() { return new Promise((resolve) => { resolveCredential = resolve }) }})
+	var pending = rt.subscribe('message_sent')
+	await h.tick(100)
+	rt.stop()
+	assert.equal((await pending).error, 'dead')
+	resolveCredential('late')
+	await h.tick(300000)
+	assert.equal(h.calls.length, 0)
+	assert.equal(h.timerCount(), 0)
 })

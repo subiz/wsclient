@@ -38,30 +38,36 @@ function pad(v) {
 
 function dofetch(method, url, body, cb) {
 	let headers = {}
+	let controller = typeof AbortController !== 'undefined' ? new AbortController() : undefined
 	if (body) headers['content-type'] = 'text/plain'
-	fetch(url, {method: method, headers: headers, body: body})
-		.then((res) => res.text().then((text) => cb && cb(text, res.status)))
-		.catch((err) => cb && cb(err, -1))
+	function complete(body, code) {
+		let callback = cb
+		cb = undefined
+		if (callback) callback(body, code)
+	}
+	fetch(url, {method: method, headers: headers, body: body, signal: controller && controller.signal})
+		.then((res) => res.text().then((text) => ({text, status: res.status})))
+		.then((res) => complete(res.text, res.status), (err) => complete(err, -1))
+	return {abort() { cb = undefined; if (controller) controller.abort() }}
 }
 
-// xhrsend sends an HTTP request
+// xhrsend returns an abort handle. The owner controls the request deadline.
 var xhrsend = function (method, url, body, cb) {
 	if (typeof XMLHttpRequest === 'undefined') return dofetch(method, url, body, cb)
 	var request = new XMLHttpRequest()
-	request.onreadystatechange = function (e) {
-		if (request.readyState !== 4) return
-		cb && cb(request.responseText, request.status)
-		cb = undefined // dont call cb anymore
+	function complete(body, code) {
+		var callback = cb
+		cb = undefined
+		if (callback) callback(body, code)
 	}
-
-	request.onerror = function () {
-		cb && cb(request.responseText, -1) // network error
-		cb = undefined // dont call cb anymore
+	request.onreadystatechange = function () {
+		if (request.readyState === 4) complete(request.responseText, request.status)
 	}
-
+	request.onerror = function () { complete(request.responseText, -1) }
 	request.open(method, url)
 	if (body) request.setRequestHeader('content-type', 'text/plain')
 	request.send(body)
+	return {abort() { cb = undefined; request.abort() }}
 }
 
 // JSON.parse without exception
@@ -72,7 +78,7 @@ function parseJSON(str) {
 	} catch (e) {}
 }
 
-function Pubsub() {
+function Pubsub(onError) {
 	// holds all subscriptions for all topics
 	// example {
 	//   topic1: [cb1, cb2],
@@ -89,7 +95,13 @@ function Pubsub() {
 
 		var cbs = listeners[topic]
 		if (!cbs) return
-		for (var i = 0; i < cbs.length; i++) cbs[i].apply(undefined, args)
+		for (var i = 0; i < cbs.length; i++) {
+			if (!onError) { cbs[i].apply(undefined, args); continue }
+			try {
+				var result = cbs[i].apply(undefined, args)
+				if (result && typeof result.then === 'function') Promise.resolve(result).catch(onError)
+			} catch (err) { onError(err) }
+		}
 	}
 
 	// register a callback function for a topic
