@@ -18,6 +18,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 	callAPI = callAPI || xhrsend // allow hook
 	credential = credential || {}
 	var lastToken = ''
+	var lastAccessToken = ''
 	if (!accid) accid = ''
 	var is_dead = false // tell if the connection is dead
 	var is_polling_stuck = false // tell if we've having trouble doing /poll
@@ -110,6 +111,7 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 							resolve(repeat('dead', topics.length))
 							return rs(false) // break loop
 						}
+						lastAccessToken = access_token || ''
 
 						if (credential.user_ref) query += '&user_ref=' + encodeURIComponent(credential.user_ref)
 						else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
@@ -185,6 +187,26 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 		return 'active'
 	}
 
+	// Page exit cannot wait for credential refresh or a normal XHR response.
+	this.cleanup = function (browserWindow) {
+		if (is_dead || !lastToken) return
+		var url = apiUrl + 'cleanup?token=' + encodeURIComponent(lastToken) + '&account-id=' + encodeURIComponent(accid)
+		// Also support hosts where /rt goes through the standard API auth wrapper.
+		if (credential.user_ref) url += '&user_ref=' + encodeURIComponent(credential.user_ref)
+		else if (credential.user_mask) url += '&user-mask=' + encodeURIComponent(credential.user_mask)
+		else if (lastAccessToken) url += '&access-token=' + encodeURIComponent(lastAccessToken)
+		try {
+			if (browserWindow.navigator && typeof browserWindow.navigator.sendBeacon === 'function') {
+				if (browserWindow.navigator.sendBeacon(url)) return
+			}
+		} catch (e) {}
+		try {
+			if (typeof browserWindow.fetch === 'function') {
+				Promise.resolve(browserWindow.fetch(url, {method: 'POST', keepalive: true, credentials: 'include'})).catch(function () {})
+			}
+		} catch (e) {}
+	}
+
 	// kill force the connection to dead state
 	var kill = function (reason) {
 		is_dead = true
@@ -206,12 +228,40 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 	}
 	if (!accid) accid = credential.account_id || ''
 	var pubsub = new Pubsub()
+	var reconnectTimer
+	var stopped = false
+	var leavingPage = false
+	var browserWindow =
+		typeof window !== 'undefined' &&
+		window.document &&
+		typeof window.addEventListener === 'function' &&
+		typeof window.removeEventListener === 'function'
+			? window
+			: undefined
+
+	var onPageHide = function (event) {
+		// A page saved in the back/forward cache may resume this connection.
+		if (event.persisted || leavingPage) return
+		leavingPage = true
+		clearTimeout(reconnectTimer)
+		reconnectTimer = undefined
+		browserWindow.removeEventListener('pagehide', onPageHide)
+		if (!conn) return
+		var oldconn = conn
+		conn = undefined
+		oldconn.cleanup(browserWindow)
+		oldconn.kill('pagehide')
+	}
 
 	// holds all topics that realtime must subscribed
 	var topics = {}
 
 	// stop the connection
 	this.stop = function () {
+		stopped = true
+		clearTimeout(reconnectTimer)
+		reconnectTimer = undefined
+		if (browserWindow) browserWindow.removeEventListener('pagehide', onPageHide)
 		if (!conn) return
 		// detach before killing so onDead knows this is intentional and
 		// doesn't schedule a reconnect
@@ -260,6 +310,11 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 	// if the Conn is dead, it recreate a new one
 	var conn
 	var reconnect = function () {
+		if (leavingPage) return Promise.resolve({error: 'dead'})
+		stopped = false
+		clearTimeout(reconnectTimer)
+		reconnectTimer = undefined
+		if (browserWindow) browserWindow.addEventListener('pagehide', onPageHide)
 		var randomUrl = apiUrls[Math.floor(Math.random() * apiUrls.length)]
 		if (conn) {
 			// detach before killing so the old conn's onDead doesn't
@@ -276,7 +331,7 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 				if (conn === undefined || myconn != conn) return // outdated
 				conn = undefined // prevent dupplicate dead fire
 				pubsub.emit('interrupted', code, body, status)
-				if (!skipautoreconnect) setTimeout(reconnect, 2000) // reconnect and resubscribe after 2 sec
+				if (!skipautoreconnect && !stopped && !leavingPage) reconnectTimer = setTimeout(reconnect, 2000)
 			},
 			function (events) {
 				if (myconn != conn) return

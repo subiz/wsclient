@@ -4,7 +4,7 @@
 	"main": "realtime.js",
 	"scripts": {
 		"dev": "vite",
-		"test": "node realtime.test.js"
+		"test": "node --test realtime.lifecycle.test.js && node realtime.test.js"
 	},
 	"repository": {
 		"type": "git",

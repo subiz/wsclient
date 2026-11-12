@@ -51,6 +51,31 @@ The connection auto-reconnects 2 seconds after it dies and resubscribes all
 previously subscribed topics. Polling is throttled to at most 4 requests per
 second even if the server misbehaves and answers instantly.
 
+### Browser page exit
+
+In a browser, each active `Realtime` instance listens for `pagehide`. When the
+page is discarded (closing a tab, reloading, or navigating away), it sends a
+best-effort `POST` to `cleanup` on the latest realtime host, with the latest
+sequential token and account ID. It uses `navigator.sendBeacon`; if unavailable,
+rejected, or throwing, it falls back to `fetch` with `keepalive: true`. Cleanup
+uses the last subscription credentials and never waits for an access-token
+refresh while the page exits. These requests use the browser transport directly,
+not the optional `callAPI` hook.
+
+The exiting instance stops polling and cancels pending auto-reconnects. A new
+page creates a new subscription; it must not reuse the cleaned connection's
+token. No cleanup is sent for network loss, a hidden/background tab, or
+`pagehide` with `persisted: true` (the page may return from the back/forward
+cache). Node.js and native runtimes without a browser document do not install
+this listener. `stop()` removes the listener; an explicit `reconnect()` attaches
+it again while the page is still open.
+
+Browser exit notifications are not guaranteed, especially when a browser is
+force-closed. If no token has been received yet or cleanup cannot be delivered,
+the server's existing two-minute connection expiry remains the fallback. See
+[pagehide](https://developer.mozilla.org/en-US/docs/Web/API/Window/pagehide_event)
+and [sendBeacon](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/sendBeacon).
+
 ### subscribe(topics)
 
 Tells the server we are listening for those topics. `topics` is a string or an
