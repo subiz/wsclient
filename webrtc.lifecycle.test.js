@@ -129,7 +129,6 @@ function environment({connected = false, throwEnded = false, subscribe, setupTim
 		reportCallbackError(err) {
 			errors.push(err)
 		},
-		logError() {},
 		xhrsend: transport,
 		randomString: () => String(++seq).padStart(20, 'a'),
 	}

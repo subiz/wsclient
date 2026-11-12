@@ -1,4 +1,4 @@
-var {logError, xhrsend, randomString, reportCallbackError} = require('./common.js')
+var {xhrsend, randomString, reportCallbackError} = require('./common.js')
 const servers = {
 	iceServers: [{urls: ['stun:stun.l.google.com:19302']}],
 }
@@ -891,7 +891,6 @@ function WebRTCConn(options) {
 				.catch((err) => {
 					// không catch thì thành unhandled rejection; candidate hỏng chỉ cần log
 					console.error('[webrtc]', 'ADD CANDIDATE FAILED', connId, err)
-					logError(accid, agid, (err && err.message) || err, 'addIceCandidate')
 				})
 		}
 
@@ -955,7 +954,6 @@ function WebRTCConn(options) {
 							let path = `finish?x-access-token=${access_token}&connection_id=${connId}&call_id=${session.callid}&version=2&negotiation_id=${negid}&account_id=${accid}`
 							postPerCall(session.callid, path, jsonify(answer), function (body, code) {
 								if (code !== 200) {
-									logError(accid, agid, body, 'finish:295')
 									return console.error('CANNOT FINISH', body)
 								}
 								return
@@ -965,7 +963,6 @@ function WebRTCConn(options) {
 			}
 			negotiationQueue[connId] = (negotiationQueue[connId] || env.Promise.resolve()).then(handleOffer).catch((err) => {
 				console.error('[webrtc]', 'NEGOTIATION FAILED', connId, err)
-				logError(accid, agid, (err && err.message) || err, 'negotiation_offered')
 			})
 			return
 		}
@@ -1156,7 +1153,6 @@ function WebRTCConn(options) {
 				key,
 			)}&account_id=${accid}`
 			postPerCall(callid, path, undefined, (body, code) => {
-				if (code != 200) logError(accid, agid, body, 'sendDtmf:463')
 				body = parseJSON(body)
 				return code != 200 ? rs({error: body}) : rs({body})
 			})
@@ -1172,7 +1168,6 @@ function WebRTCConn(options) {
 				tonumber,
 			)}&account_id=${accid}`
 			postPerCall(callid, path, undefined, (body, code) => {
-				if (code != 200) logError(accid, agid, body, 'transferCall:478')
 				collect('transfer_call', callid, env.Date.now() - start)
 				body = parseJSON(body)
 				return code != 200 ? rs({error: body}) : rs({body})

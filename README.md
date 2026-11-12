@@ -15,8 +15,9 @@ through WebRTC.
 npm install @subiz/wsclient
 ```
 
-The package exports CommonJS modules. Use a CommonJS-capable bundler for browser
-applications. `Realtime` uses `XMLHttpRequest` when available and falls back to
+The package has no runtime dependencies and exports CommonJS modules. Use a
+CommonJS-capable bundler for browser applications. `Realtime` uses
+`XMLHttpRequest` when available and falls back to
 global `fetch`; a custom transport can also be supplied.
 
 `WebPhone` requires a browser with `window`, `document.body`, WebRTC, and
@@ -88,6 +89,11 @@ Only `apiUrls` and the credentials needed by your server are required.
 
 There is no topic unsubscribe API. An explicit `reconnect()` replaces the
 connection without emitting `onInterrupted` for the old connection.
+
+Subscriptions are queued internally and sent one batch at a time. Small batches
+wait up to 100 ms from their first queued topic; a queue exceeding 50 topics can
+flush earlier. A pending request can delay later batches. Stopping or replacing
+the connection also settles subscriptions still waiting in the queue.
 
 ### Retry and delivery behavior
 
@@ -325,7 +331,7 @@ function dispose() {
 Required options are `accid`, `agid`, `access_token`, `realtime`, and `env`.
 For browsers, pass `window` as `env`; custom environments must provide WebRTC
 constructors, `Promise`, `JSON`, `Date`, and timeout/interval functions. The
-default transport and error logging also use browser globals; `env` alone is
+default transport also uses global `XMLHttpRequest` or `fetch`; `env` alone is
 not a complete native-runtime adapter.
 
 | Optional option | Default and behavior |

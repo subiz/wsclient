@@ -2,8 +2,14 @@
 	"name": "@subiz/wsclient",
 	"version": "4.0.37",
 	"main": "realtime.js",
+	"files": [
+		"realtime.js",
+		"webphone.js",
+		"webrtc.js",
+		"common.js",
+		"README.md"
+	],
 	"scripts": {
-		"dev": "vite",
 		"test": "node --test realtime.lifecycle.test.js common.transport.test.js webrtc.lifecycle.test.js && node realtime.test.js"
 	},
 	"repository": {
@@ -13,13 +19,8 @@
 	"author": "Thanh Pham <thanhpham@vietnambiz.com>",
 	"license": "MIT",
 	"homepage": "https://github.com/subiz/wsclient#readme",
-	"description": "",
+	"description": "Subiz realtime subscriptions over HTTP long polling and browser WebRTC calling.",
 	"devDependencies": {
-		"tape": "^5.10.2",
-		"vite": "^8.2.1",
-		"vite-plugin-commonjs": "^0.10.4"
-	},
-	"dependencies": {
-		"@subiz/flow": "^1.1.0"
+		"tape": "^5.10.3"
 	}
 }

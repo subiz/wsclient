@@ -1,4 +1,3 @@
-var flow = require('@subiz/flow')
 var {xhrsend, parseJSON, Pubsub} = require('./common.js')
 
 // Conn represents a realtime connection between an user and the realtime
@@ -49,7 +48,9 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 			try {
 				if (typeof transport === 'function') transport()
 				else if (transport && typeof transport.abort === 'function') transport.abort()
-			} catch (err) { reportCallbackError(err) }
+			} catch (err) {
+				reportCallbackError(err)
+			}
 		}
 		function cancel() {
 			if (settled) return
@@ -70,8 +71,11 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 			cancel()
 			if (!is_dead) cb(undefined, -1)
 		}, timeout)
-		try { transport = callAPI(method, url, body, complete) }
-		catch (err) { complete(undefined, -1) }
+		try {
+			transport = callAPI(method, url, body, complete)
+		} catch (err) {
+			complete(undefined, -1)
+		}
 		// A synchronous custom transport can stop the connection before returning.
 		if (is_dead) abort()
 	}
@@ -86,27 +90,67 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 	function polling(backoff) {
 		if (is_dead) return
 		var started = Date.now()
-		request('get', apiUrl + 'poll?token=' + encodeURIComponent(lastToken) + '&v=5&account-id=' + encodeURIComponent(accid), undefined, POLL_TIMEOUT, function (body, code) {
-			var wait = Math.max(0, MIN_POLL_INTERVAL - (Date.now() - started))
-			if (retryable(code)) {
-				is_polling_stuck = true
-				return later(function () { polling(backoff + 1) }, Math.max(calcNextBackoff(backoff), wait))
-			}
-			if (code !== 200) {
-				is_polling_stuck = true
-				return kill('poll')
-			}
-			body = parseJSON(body) || {}
-			if (!body.sequential_token) return kill('poll')
-			is_polling_stuck = false
-			if (body.host) apiUrl = absUrl(body.host)
-			lastToken = body.sequential_token
-			onEvents(body.events || [])
-			if (!is_dead) later(function () { polling(0) }, wait)
-		})
+		request(
+			'get',
+			apiUrl + 'poll?token=' + encodeURIComponent(lastToken) + '&v=5&account-id=' + encodeURIComponent(accid),
+			undefined,
+			POLL_TIMEOUT,
+			function (body, code) {
+				var wait = Math.max(0, MIN_POLL_INTERVAL - (Date.now() - started))
+				if (retryable(code)) {
+					is_polling_stuck = true
+					return later(
+						function () {
+							polling(backoff + 1)
+						},
+						Math.max(calcNextBackoff(backoff), wait),
+					)
+				}
+				if (code !== 200) {
+					is_polling_stuck = true
+					return kill('poll')
+				}
+				body = parseJSON(body) || {}
+				if (!body.sequential_token) return kill('poll')
+				is_polling_stuck = false
+				if (body.host) apiUrl = absUrl(body.host)
+				lastToken = body.sequential_token
+				onEvents(body.events || [])
+				if (!is_dead)
+					later(function () {
+						polling(0)
+					}, wait)
+			},
+		)
 	}
 
-	var subQueue = flow.batch(50, 100, function (topics) {
+	var pendingTopics = []
+	var batchTimer
+	var batchRunning = false
+	function scheduleBatch() {
+		if (is_dead || batchRunning || !pendingTopics.length) return
+		cancelTimer(batchTimer)
+		// Flush full queues early; smaller batches wait from their oldest topic.
+		var delay = pendingTopics.length > 50 ? 0 : Math.max(0, 100 - (Date.now() - pendingTopics[0].created))
+		batchTimer = later(flushBatch, delay)
+	}
+	function flushBatch() {
+		batchTimer = undefined
+		if (is_dead || batchRunning || !pendingTopics.length) return
+		batchRunning = true
+		var batch = pendingTopics.splice(0, 50)
+		function finish(results) {
+			batch.forEach(function (item, i) { item.resolve(results[i]) })
+			batchRunning = false
+			scheduleBatch()
+		}
+		subscribeBatch(batch.map(function (item) { return item.topic })).then(finish, function (err) {
+			reportCallbackError(err)
+			kill('subs')
+			finish(repeat('dead', batch.length))
+		})
+	}
+	function subscribeBatch(topics) {
 		if (is_dead) return Promise.resolve(repeat('dead', topics.length))
 		if (!topics.length) return Promise.resolve([])
 		return new Promise(function (resolve) {
@@ -120,10 +164,17 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 				subscriptions.delete(cancel)
 				resolve(result)
 			}
-			function cancel() { finish(repeat('dead', topics.length)) }
+			function cancel() {
+				finish(repeat('dead', topics.length))
+			}
 			subscriptions.add(cancel)
-			var stuckTimer = later(function () { is_sub_stuck = true }, 4000)
-			var deadline = later(function () { is_sub_stuck = true; kill('subs') }, 60000)
+			var stuckTimer = later(function () {
+				is_sub_stuck = true
+			}, 4000)
+			var deadline = later(function () {
+				is_sub_stuck = true
+				kill('subs')
+			}, 60000)
 			var retryTimer
 			function retry() {
 				if (done || is_dead) return
@@ -132,38 +183,49 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 			}
 			function attempt() {
 				if (done || is_dead) return
-				Promise.resolve().then(function () { return credential.getAccessToken() }).then(function (accessToken) {
-					if (done || is_dead) return
-					lastAccessToken = accessToken || ''
-					var query = '?token=' + encodeURIComponent(lastToken)
-					if (credential.user_ref) query += '&user_ref=' + encodeURIComponent(credential.user_ref)
-					else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
-					else if (accessToken) query += '&access-token=' + encodeURIComponent(accessToken)
-					var url = apiUrl + 'subs' + query + '&v=5&account-id=' + encodeURIComponent(accid || credential.account_id)
-					request('post', url, JSON.stringify({events: topics}), 60000, function (body, code) {
-						if (done || is_dead) return
-						if (retryable(code)) return retry()
-						if (code !== 200) return kill('subs')
-						if (!lastToken) {
-							body = parseJSON(body) || {}
-							if (!body.initial_token) return kill('subs')
-							if (body.host) apiUrl = absUrl(body.host)
-							lastToken = body.initial_token
-						}
-						is_sub_stuck = false
-						finish(topics)
-						startPolling()
+				Promise.resolve()
+					.then(function () {
+						return credential.getAccessToken()
 					})
-				}).catch(retry)
+					.then(function (accessToken) {
+						if (done || is_dead) return
+						lastAccessToken = accessToken || ''
+						var query = '?token=' + encodeURIComponent(lastToken)
+						if (credential.user_ref) query += '&user_ref=' + encodeURIComponent(credential.user_ref)
+						else if (credential.user_mask) query += '&user-mask=' + encodeURIComponent(credential.user_mask)
+						else if (accessToken) query += '&access-token=' + encodeURIComponent(accessToken)
+						var url = apiUrl + 'subs' + query + '&v=5&account-id=' + encodeURIComponent(accid || credential.account_id)
+						request('post', url, JSON.stringify({events: topics}), 60000, function (body, code) {
+							if (done || is_dead) return
+							if (retryable(code)) return retry()
+							if (code !== 200) return kill('subs')
+							if (!lastToken) {
+								body = parseJSON(body) || {}
+								if (!body.initial_token) return kill('subs')
+								if (body.host) apiUrl = absUrl(body.host)
+								lastToken = body.initial_token
+							}
+							is_sub_stuck = false
+							finish(topics)
+							startPolling()
+						})
+					})
+					.catch(retry)
 			}
 			attempt()
 		})
-	})
+	}
 
 	// subscribe call /subs API to tell server that we are listening for those events
 	// this function may start polling loop if it hasn't been started yet
 	// its safe to call this function multiple times
-	this.subscribe = subQueue.push.bind(subQueue)
+	this.subscribe = function (topic) {
+		if (is_dead) return Promise.resolve('dead')
+		return new Promise(function (resolve) {
+			pendingTopics.push({topic, resolve, created: Date.now()})
+			scheduleBatch()
+		})
+	}
 
 	this.getStatus = function () {
 		if (is_dead) return 'dead'
@@ -186,7 +248,9 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 		} catch (e) {}
 		try {
 			if (typeof browserWindow.fetch === 'function') {
-				Promise.resolve(browserWindow.fetch(url, {method: 'POST', keepalive: true, credentials: 'include'})).catch(function () {})
+				Promise.resolve(browserWindow.fetch(url, {method: 'POST', keepalive: true, credentials: 'include'})).catch(
+					function () {},
+				)
 			}
 		} catch (e) {}
 	}
@@ -199,6 +263,8 @@ function Conn(apiUrl, credential, onDead, onEvents, callAPI, accid) {
 		timers.clear()
 		for (var cancel of requests) cancel()
 		for (var finish of subscriptions) finish()
+		for (var item of pendingTopics) item.resolve('dead')
+		pendingTopics = []
 		onDead(reason)
 	}
 	this.kill = kill

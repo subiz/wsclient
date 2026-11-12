@@ -5,7 +5,7 @@ var path = require('node:path')
 var vm = require('node:vm')
 var {createRequire} = require('node:module')
 
-// Run the real client and batching dependency with isolated browser globals
+// Run the real client with isolated browser globals
 // and a clock we can advance without waiting for reconnect/subscription timers.
 function environment(options = {}) {
 	var now = 100000
@@ -116,6 +116,108 @@ function environment(options = {}) {
 		listenerCount() { return (listeners.get('pagehide') || new Set()).size },
 	}
 }
+
+test('subscriptions share a 100ms batching window without duplicate topics', async () => {
+	var h = environment()
+	var rt = h.create()
+	var first = rt.subscribe(['first', 'shared'])
+	await h.tick(60)
+	var second = rt.subscribe(['shared', 'second'])
+	await h.tick(39)
+	assert.equal(h.calls.length, 0)
+	await h.tick(1)
+	var sub = h.take('subs')
+	assert.deepEqual(JSON.parse(sub.body).events, ['first', 'shared', 'second'])
+	sub.cb(JSON.stringify({initial_token: 'initial'}), 200)
+	for (var result of await Promise.all([first, second])) assert.equal(result.error, undefined)
+	rt.stop()
+	assert.equal(h.timerCount(), 0)
+})
+
+test('large subscription queues send at most 50 topics serially using the latest token and host', async () => {
+	var h = environment()
+	var rt = h.create()
+	var topics = Array.from({length: 121}, (_, i) => 'topic-' + i)
+	var ready = rt.subscribe(topics)
+	await h.tick(0)
+	var first = h.take('subs')
+	assert.deepEqual(JSON.parse(first.body).events, topics.slice(0, 50))
+	var extra = rt.subscribe(['topic-0', 'extra'])
+	await h.tick(200)
+	assert.equal(h.calls.length, 1, 'wait for the active subscription before sending more')
+	first.cb(JSON.stringify({initial_token: 'initial', host: '//api.example.com/rt/2/'}), 200)
+	await h.tick(0)
+	var second = h.take('subs')
+	assert.deepEqual(JSON.parse(second.body).events, topics.slice(50, 100))
+	assert.equal(new URL(second.url).pathname, '/rt/2/subs')
+	assert.equal(new URL(second.url).searchParams.get('token'), 'initial')
+	h.take('poll').cb(JSON.stringify({sequential_token: 'latest', events: []}), 200)
+	second.cb('{}', 200)
+	await h.tick(0)
+	var third = h.take('subs')
+	assert.deepEqual(JSON.parse(third.body).events, topics.slice(100).concat('extra'))
+	assert.equal(new URL(third.url).searchParams.get('token'), 'latest')
+	third.cb('{}', 200)
+	for (var result of await Promise.all([ready, extra])) assert.equal(result.error, undefined)
+	assert.equal(h.calls.filter((call) => new URL(call.url).pathname.endsWith('/subs')).length, 3)
+	rt.stop()
+	assert.equal(h.timerCount(), 0)
+})
+
+test('stop settles topics still waiting for their batching window', async () => {
+	var h = environment()
+	var rt = h.create()
+	var pending = rt.subscribe(['first', 'second'])
+	rt.stop()
+	assert.equal((await pending).error, 'dead')
+	assert.equal(h.timerCount(), 0)
+	await h.tick(1000)
+	assert.equal(h.calls.length, 0)
+})
+
+for (const failure of ['stop', 'http', 'timeout']) {
+	test('active and queued subscription batches settle on ' + failure, async () => {
+		var h = environment()
+		var rt = h.create(undefined, true)
+		var pending = rt.subscribe(Array.from({length: 125}, (_, i) => 'topic-' + i))
+		await h.tick(0)
+		var active = h.take('subs')
+		if (failure === 'stop') rt.stop()
+		else if (failure === 'http') active.cb('forbidden', 403)
+		else await h.tick(60000)
+		assert.equal((await pending).error, 'dead')
+		assert.equal(h.timerCount(), 0)
+		active.cb(JSON.stringify({initial_token: 'late'}), 200)
+		await h.tick(120000)
+		assert.equal(h.calls.length, 1)
+	})
+}
+
+test('reconnect cancels the old queue and resubscribes every remembered topic', async () => {
+	var h = environment()
+	var rt = h.create()
+	var topics = Array.from({length: 60}, (_, i) => 'topic-' + i)
+	var pending = rt.subscribe(topics)
+	await h.tick(0)
+	var old = h.take('subs')
+	var ready = rt.reconnect()
+	assert.equal(old.aborts, 1)
+	await pending
+	await h.tick(0)
+	var first = h.take('subs')
+	assert.deepEqual(JSON.parse(first.body).events, topics.slice(0, 50))
+	assert.equal(new URL(first.url).searchParams.get('token'), '')
+	first.cb(JSON.stringify({initial_token: 'new'}), 200)
+	old.cb(JSON.stringify({initial_token: 'old'}), 200)
+	await h.tick(100)
+	var second = h.take('subs')
+	assert.deepEqual(JSON.parse(second.body).events, topics.slice(50))
+	assert.equal(new URL(second.url).searchParams.get('token'), 'new')
+	second.cb('{}', 200)
+	assert.equal((await ready).error, undefined)
+	rt.stop()
+	assert.equal(h.timerCount(), 0)
+})
 
 test('page exit cleans the latest token and host once, then stops all activity', async () => {
 	var h = environment()
