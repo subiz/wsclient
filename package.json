@@ -1,10 +1,10 @@
 {
 	"name": "@subiz/wsclient",
-	"version": "4.0.36",
+	"version": "4.0.37",
 	"main": "realtime.js",
 	"scripts": {
 		"dev": "vite",
-		"test": "node --test realtime.lifecycle.test.js common.transport.test.js && node realtime.test.js"
+		"test": "node --test realtime.lifecycle.test.js common.transport.test.js webrtc.lifecycle.test.js && node realtime.test.js"
 	},
 	"repository": {
 		"type": "git",

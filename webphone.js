@@ -1,9 +1,9 @@
-var {xhrsend, parseJSON, Pubsub, randomString} = require('./common.js')
+var {xhrsend, parseJSON, Pubsub, randomString, reportCallbackError} = require('./common.js')
 const WebRTCConn = require('./webrtc.js')
 var Realtime = require('./realtime.js')
 
 function WebPhone(access_token, realtime) {
-	var pubsub = new Pubsub()
+	var pubsub = new Pubsub(reportCallbackError)
 
 	var $audio = null
 	// chuẩn bị thẻ audio để nghe được
@@ -28,13 +28,18 @@ function WebPhone(access_token, realtime) {
 	if (!agid.startsWith('ag')) throw 'invalid_access_token'
 
 	if (!realtime)
-		realtime = new Realtime('https://api.subiz.com.vn/rt/0/', {
-			getAccessToken: function () {
-				return new Promise(function (rs) {
-					rs(access_token)
-				})
+		realtime = new Realtime(
+			'https://api.subiz.com.vn/rt/0/',
+			{
+				getAccessToken: function () {
+					return new Promise(function (rs) {
+						rs(access_token)
+					})
+				},
 			},
-		}, undefined, accid)
+			undefined,
+			accid,
+		)
 
 	var webrtcconn = new WebRTCConn({
 		accid: accid,
@@ -139,14 +144,9 @@ function WebPhone(access_token, realtime) {
 	}
 
 	this.answerWebCall = function (callid) {
-		return new Promise(function (rs) {
-			getMicroPermissions().then(function (stream) {
-				current_call_id = callid
-				webrtcconn.answerCall(callid, stream).then(function (out) {
-					if (out.error) return rs({error: out.error})
-					rs(out.body)
-				})
-			})
+		current_call_id = callid
+		return webrtcconn.answerCall(callid, getMicroPermissions()).then(function (out) {
+			return out.error ? {error: out.error} : out.body
 		})
 	}
 
@@ -159,6 +159,7 @@ function WebPhone(access_token, realtime) {
 	// makeCall(number, ['a','b','c'], streamPm) // fallback specific number
 	// makeCall(number, function() {}, streamPm) //
 	this.makeCall = function (number, fromnumbers, streamPm, _a, _b, _state) {
+		var ownsSource = !_state
 		if (!_state) _state = {}
 		if (!fromnumbers || (Array.isArray(fromnumbers) && fromnumbers.length == 0)) {
 			fromnumbers = _numbers
@@ -173,8 +174,6 @@ function WebPhone(access_token, realtime) {
 		callid += `-${randomString(4, base)}-${randomString(12, base)}`
 		current_call_id = callid
 
-		if (!streamPm) streamPm = getMicroPermissions()
-
 		let callnumber = chooseCallNumber(fromnumbers, _state.called)
 		if (!callnumber)
 			return Promise.resolve(
@@ -188,9 +187,13 @@ function WebPhone(access_token, realtime) {
 					id: callid,
 					hangup_code: 'failure',
 					status: 'ended',
-				}
+				},
 			)
-		return webrtcconn.makeCall(number, callnumber, streamPm, callid).then((out) => {
+		// Each attempt owns its clone. The source stays live across number fallback
+		// and is released once the complete dialing sequence finishes.
+		if (!_state.source) _state.source = Promise.resolve(streamPm || getMicroPermissions())
+		var attemptStream = _state.source.then((stream) => stream && stream.clone())
+		var result = webrtcconn.makeCall(number, callnumber, attemptStream, callid).then((out) => {
 			if (out.error) return out
 			if (out.hangup_code == 'cancel') return out
 			if (out.answered > 0) return out
@@ -202,6 +205,14 @@ function WebPhone(access_token, realtime) {
 				return me.makeCall(number, fromnumbers, streamPm, _a, _b, _state)
 			}
 			return out
+		})
+		if (!ownsSource) return result
+		return result.finally(() => {
+			_state.source
+				.then((stream) => {
+					if (stream) stream.getTracks().forEach((track) => track.stop())
+				}, reportCallbackError)
+				.catch(reportCallbackError)
 		})
 	}
 

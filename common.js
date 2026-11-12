@@ -47,8 +47,16 @@ function dofetch(method, url, body, cb) {
 	}
 	fetch(url, {method: method, headers: headers, body: body, signal: controller && controller.signal})
 		.then((res) => res.text().then((text) => ({text, status: res.status})))
-		.then((res) => complete(res.text, res.status), (err) => complete(err, -1))
-	return {abort() { cb = undefined; if (controller) controller.abort() }}
+		.then(
+			(res) => complete(res.text, res.status),
+			(err) => complete(err, -1),
+		)
+	return {
+		abort() {
+			cb = undefined
+			if (controller) controller.abort()
+		},
+	}
 }
 
 // xhrsend returns an abort handle. The owner controls the request deadline.
@@ -63,11 +71,18 @@ var xhrsend = function (method, url, body, cb) {
 	request.onreadystatechange = function () {
 		if (request.readyState === 4) complete(request.responseText, request.status)
 	}
-	request.onerror = function () { complete(request.responseText, -1) }
+	request.onerror = function () {
+		complete(request.responseText, -1)
+	}
 	request.open(method, url)
 	if (body) request.setRequestHeader('content-type', 'text/plain')
 	request.send(body)
-	return {abort() { cb = undefined; request.abort() }}
+	return {
+		abort() {
+			cb = undefined
+			request.abort()
+		},
+	}
 }
 
 // JSON.parse without exception
@@ -96,11 +111,16 @@ function Pubsub(onError) {
 		var cbs = listeners[topic]
 		if (!cbs) return
 		for (var i = 0; i < cbs.length; i++) {
-			if (!onError) { cbs[i].apply(undefined, args); continue }
+			if (!onError) {
+				cbs[i].apply(undefined, args)
+				continue
+			}
 			try {
 				var result = cbs[i].apply(undefined, args)
 				if (result && typeof result.then === 'function') Promise.resolve(result).catch(onError)
-			} catch (err) { onError(err) }
+			} catch (err) {
+				onError(err)
+			}
 		}
 	}
 
@@ -128,4 +148,11 @@ function randomString(len, base) {
 	return str
 }
 
-module.exports = {xhrsend, parseJSON, Pubsub, randomString, logError}
+// Reporting consumer failures must itself be safe in browser and native hosts.
+function reportCallbackError(err) {
+	try {
+		if (typeof console !== 'undefined' && console.error) console.error('Callback failed:', err)
+	} catch (ignored) {}
+}
+
+module.exports = {reportCallbackError, xhrsend, parseJSON, Pubsub, randomString, logError}

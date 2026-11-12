@@ -1,5 +1,4 @@
-var flow = require('@subiz/flow')
-var {logError, xhrsend, randomString} = require('./common.js')
+var {logError, xhrsend, randomString, reportCallbackError} = require('./common.js')
 const servers = {
 	iceServers: [{urls: ['stun:stun.l.google.com:19302']}],
 }
@@ -7,7 +6,20 @@ const servers = {
 // env = {RTCPeerConnection, RTCIceCandidate, RTCSessionDescription, setTimeout, clearTimeout, setInterval, clearInterval, jsonify, parseJSON}
 function WebRTCConn(options) {
 	let {apiUrl, access_token, accid, agid, realtime, callAPI, env, onTrack, onEvent, collect} = options
-	if (!collect) collect = function () {}
+	// Application callbacks must never interrupt signaling or resource cleanup.
+	let protect =
+		(cb) =>
+		(...args) => {
+			try {
+				let result = cb && cb(...args)
+				if (result && result.then) env.Promise.resolve(result).catch(reportCallbackError)
+			} catch (err) {
+				reportCallbackError(err)
+			}
+		}
+	onEvent = protect(onEvent)
+	onTrack = protect(onTrack)
+	collect = protect(collect)
 	if (!apiUrl) apiUrl = 'https://callcenter.subiz.com.vn/wc/'
 
 	let dead = false
@@ -36,6 +48,8 @@ function WebRTCConn(options) {
 	const disconnectGraceMs = 30000
 	const rtpStaleMs = 90000
 	const inviteStaleMs = 120000
+	const setupTimeoutMs = options.setupTimeoutMs > 0 ? options.setupTimeoutMs : 60000
+	let operations = new Set()
 
 	let sessionsByCall = {}
 	let sessionsByConn = {}
@@ -97,8 +111,11 @@ function WebRTCConn(options) {
 	// thì bỏ pin và thử lại một lần qua gateway mặc định — gateway vẫn proxy về
 	// home được nên không bao giờ tệ hơn trước khi pin
 	let postPerCall = (callid, path, body, cb) => {
+		if (dead) return cb && cb(jsonify({error: 'shutdown'}), -1)
+		let owner = getSessionByCall(callid)
 		let base = apiBaseFor(callid)
 		callAPI('post', base + path, body, (respBody, code) => {
+			if (dead || (owner && getSessionByCall(callid) !== owner)) return
 			if ((!code || code < 0) && base != apiUrl) {
 				console.warn('[webrtc]', 'PINNED HOST UNREACHABLE -> FALLBACK GATEWAY', 'call_id', callid, base)
 				let session = getSessionByCall(callid)
@@ -270,9 +287,12 @@ function WebRTCConn(options) {
 	}
 
 	// to receive incoming call
-	realtime.subscribe([`webrtc.account.${accid}.agent.${agid}`])
+	env.Promise.resolve()
+		.then(() => realtime.subscribe([`webrtc.account.${accid}.agent.${agid}`]))
+		.catch(reportCallbackError)
 
-	let initSession = (callid, cb) => {
+	let initSession = (callid, op) => {
+		op.check()
 		let connId = 'webrtc' + randomString(20)
 		let peer = new env.RTCPeerConnection(servers)
 		// call này đã có session gắn connection khác (listenCall rồi mới answerCall,
@@ -281,8 +301,9 @@ function WebRTCConn(options) {
 		let prev = getSessionByCall(callid)
 		let prevMuted = prev && prev.muted
 		if (prev && prev.peer && prev.connId && prev.connId != connId) {
-			cleanupConnection(prev.connId)
+			cleanupConnection(prev.connId, 'replaced')
 		}
+		op.connId = connId
 		let session = bindSessionConnection(callid, connId, peer)
 		if (session) {
 			session.status = 'connecting'
@@ -306,7 +327,7 @@ function WebRTCConn(options) {
 
 		peer.onicecandidate = (event) => {
 			if (!event.candidate) return
-			if (dead) return
+			if (dead || getSessionByConn(connId) !== session || isCallEndedLocally(callid)) return
 			postPerCall(
 				callid,
 				`ice-candidates?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&account_id=${accid}`,
@@ -314,40 +335,191 @@ function WebRTCConn(options) {
 			)
 		}
 
-		// topic agent đã subscribe lúc khởi tạo store, ở đây chỉ cần topic connection.
-		// .catch bắt buộc: subscribe reject mà không catch thì cb không bao giờ được
-		// gọi -> promise của makeCall/answerCall treo vĩnh viễn
-		realtime
-			.subscribe([`webrtc.account.${accid}.agent.${agid}.webrtc_connection.${connId}`])
-			.then((out) => {
-				if (out && out.error) return cb(out.error, connId)
-				return cb(undefined, connId)
-			})
-			.catch((err) => cb(err || 'subscribe_failed', connId))
+		return session
 	}
 
-	let checkIceConnected = (peer, cb, shouldStop) =>
-		flow.loop(
-			() =>
-				new env.Promise((rs) => {
-					if (shouldStop && shouldStop()) {
-						cb && cb('cancelled')
-						return rs(false)
-					}
-					if (!peer || peer.signalingState == 'closed' || peer.iceConnectionState == 'closed') {
-						cb && cb('closed')
-						return rs(false)
-					}
-					if (peer.connectionState == 'failed' || peer.iceConnectionState == 'failed') {
-						cb && cb('failed')
-						return rs(false)
-					}
-					let pass = peer && (peer.iceConnectionState == 'connected' || peer.iceConnectionState == 'completed')
-					if (!pass) return env.setTimeout((_) => rs(true), 100) // keep looping util connected
-					cb && cb()
-					rs(false)
-				}),
+	let operationError = (code) => Object.assign(new Error(String(code)), {code})
+
+	// One operation spans microphone acquisition, subscription, SDP/ICE and the
+	// final signaling response. Its identity survives session replacement/cleanup.
+	let startOperation = (callid) => {
+		for (let previous of operations) {
+			if (previous.callid === callid) previous.cancel('replaced')
+		}
+		let op = {callid, waits: new Set(), aborters: new Set()}
+		op.check = () => {
+			if (dead || op.reason) throw operationError(op.reason || 'shutdown')
+			if (isCallEndedLocally(callid)) throw operationError('call_ended')
+			if (op.connId && getConnIdByCall(callid) !== op.connId) throw operationError('replaced')
+		}
+		op.clearDeadline = () => {
+			env.clearTimeout(op.timer)
+			op.timer = undefined
+		}
+		op.cancel = (reason) => {
+			if (op.reason) return
+			op.reason = reason
+			op.clearDeadline()
+			for (let abort of op.aborters) abort()
+			for (let reject of op.waits) reject(operationError(reason))
+			op.waits.clear()
+		}
+		op.wait = (promise) => {
+			return new env.Promise((resolve, reject) => {
+				op.waits.add(reject)
+				env.Promise.resolve(promise).then(
+					(value) => {
+						op.waits.delete(reject)
+						try {
+							op.check()
+							resolve(value)
+						} catch (err) {
+							reject(err)
+						}
+					},
+					(err) => {
+						op.waits.delete(reject)
+						reject(err)
+					},
+				)
+				try {
+					op.check()
+				} catch (err) {
+					op.waits.delete(reject)
+					reject(err)
+				}
+			})
+		}
+		op.dispose = () => {
+			op.clearDeadline()
+			for (let abort of op.aborters) abort()
+			operations.delete(op)
+		}
+		op.timer = env.setTimeout(() => op.cancel('setup_timeout'), setupTimeoutMs)
+		operations.add(op)
+		return op
+	}
+
+	let acquireStream = (op, stream) =>
+		op.wait(
+			env.Promise.resolve(stream).then((stream) => {
+				// Permission prompts cannot be aborted. Dispose of their late streams.
+				if (dead || op.reason || isCallEndedLocally(op.callid)) {
+					stopStream(stream)
+					throw operationError(op.reason || (dead ? 'shutdown' : 'call_ended'))
+				}
+				op.stream = stream
+				if (!stream || !stream.getAudioTracks().some((track) => track.readyState !== 'ended'))
+					throw operationError('no_stream')
+				return stream
+			}),
 		)
+
+	let requestForOperation = (op, url, body) => {
+		op.check()
+		return op.wait(
+			new env.Promise((resolve, reject) => {
+				let settled = false
+				let transport
+				let abort = () => {
+					if (settled) return
+					settled = true
+					op.aborters.delete(abort)
+					try {
+						if (typeof transport === 'function') transport()
+						else if (transport && transport.abort) transport.abort()
+					} catch (err) {
+						reportCallbackError(err)
+					}
+				}
+				op.aborters.add(abort)
+				try {
+					transport = callAPI('post', url, body, (body, code) => {
+						if (settled) return
+						settled = true
+						op.aborters.delete(abort)
+						resolve({body, code})
+					})
+					// A custom transport may synchronously trigger shutdown before returning.
+					if (op.reason) {
+						if (typeof transport === 'function') transport()
+						else if (transport && transport.abort) transport.abort()
+					}
+				} catch (err) {
+					abort()
+					reject(err)
+				}
+			}),
+		)
+	}
+
+	let postForOperation = async (op, path, body) => {
+		let base = apiBaseFor(op.callid)
+		let out = await requestForOperation(op, base + path, body)
+		op.check()
+		if ((!out.code || out.code < 0) && base !== apiUrl) {
+			let session = getSessionByConn(op.connId)
+			if (session) session.apiBase = undefined
+			out = await requestForOperation(op, apiUrl + path, body)
+		}
+		return out
+	}
+
+	let connectOperation = async (op, stream, talk) => {
+		op.check()
+		op.stream = stream
+		let session = initSession(op.callid, op)
+		session.localStream = stream
+		applySessionMuted(session)
+		let subscribed = await op.wait(
+			realtime.subscribe([`webrtc.account.${accid}.agent.${agid}.webrtc_connection.${session.connId}`]),
+		)
+		op.check()
+		if (subscribed && subscribed.error) throw operationError(subscribed.error)
+		session.status = 'joining'
+		let started = env.Date.now()
+		let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${session.connId}&call_id=${op.callid}&account_id=${accid}`
+		if (talk) url += '&talk=true'
+		let out = await requestForOperation(op, url)
+		op.check()
+		collect(talk ? 'join_call' : 'listen_call', op.callid, env.Date.now() - started)
+		if (out.code !== 200) throw operationError(out.body || 'listen_failed')
+		pinSessionApiBase(session.connId, out.body)
+		while (true) {
+			op.check()
+			let peer = session.peer
+			if (!peer || peer.signalingState === 'closed') throw operationError('closed')
+			if (peer.connectionState === 'failed' || peer.iceConnectionState === 'failed') throw operationError('failed')
+			if (peer.iceConnectionState === 'connected' || peer.iceConnectionState === 'completed') break
+			let timer
+			try {
+				await op.wait(
+					new env.Promise((resolve) => {
+						timer = env.setTimeout(resolve, 100)
+					}),
+				)
+			} finally {
+				env.clearTimeout(timer)
+			}
+		}
+		op.check()
+		session.status = 'connected'
+		return session
+	}
+
+	let failOperation = (op, err) => {
+		let reason = (err && (err.code || err.message)) || err || 'setup_failed'
+		let current = getSessionByCall(op.callid)
+		let replaced = reason === 'replaced' || (current && current.connId !== op.connId)
+		let base = apiBaseFor(op.callid)
+		if (op.connId) cleanupCallConnection(op.callid, op.connId)
+		stopStream(op.stream)
+		if (!dead && !replaced && reason !== 'call_ended' && !isCallEndedLocally(op.callid)) {
+			expireCall({call_id: op.callid, hangup_code: String(reason)})
+			if (reason === 'setup_timeout' && op.connId) signalHangup(op.callid, base)
+		}
+		return reason
+	}
 
 	let readyToSendCandidateResolve = {}
 	let waitForRemoteDescription = {}
@@ -362,7 +534,7 @@ function WebRTCConn(options) {
 		})
 	}
 
-	let cleanupConnection = (connId) => {
+	let cleanupConnection = (connId, reason = 'call_ended') => {
 		if (!connId) return
 		let session = getSessionByConn(connId)
 		let peer = session && session.peer
@@ -416,17 +588,17 @@ function WebRTCConn(options) {
 		delete waitForRemoteDescription[connId]
 		delete readyToSendCandidateResolve[connId]
 		delete negotiationQueue[connId]
+		for (let op of operations) {
+			if (op.connId === connId) op.cancel(reason)
+		}
 	}
 
 	let cleanupCallConnection = (callid, connId) => {
-		let session = getSessionByCall(callid) || getSessionByConn(connId)
-		if (session && session.callid == callid && session.connId) connId = session.connId
-		if (session && !connId) connId = session.connId
-		if (!connId) return
-		let mappedCallId = session && session.callid
-		if (mappedCallId && mappedCallId != callid) return
-		markSessionEnded(callid)
-		cleanupConnection(connId)
+		// An explicit connection ID is authoritative. Never replace it with a newer
+		// session's ID when a stale request or ICE waiter finishes.
+		let session = connId ? getSessionByConn(connId) : getSessionByCall(callid)
+		if (!session || session.callid !== callid) return
+		cleanupConnection(session.connId)
 	}
 
 	let cleanEndedCall = () => {
@@ -543,7 +715,6 @@ function WebRTCConn(options) {
 	}
 	let _livenessInterval = env.setInterval(checkCallLiveness, 5000)
 
-	let endcallCb = {}
 	publish = (ev) => {
 		if (ev.type == 'call_ended') {
 			let callid = ev.data && ev.data.call_info && ev.data.call_info.call_id
@@ -555,9 +726,9 @@ function WebRTCConn(options) {
 			// do not clean up this now or some functions cannot work after the call ended
 			// DONOT: delete call2Connection[callid]
 
-			let arr = endcallCb[callid]
-			if (arr && arr.length > 0 && arr.map) arr.map((cb) => cb())
-			delete endcallCb[callid]
+			for (let op of operations) {
+				if (op.callid === callid) op.cancel('call_ended')
+			}
 		}
 
 		let direction = ev.data && ev.data.call_info && ev.data.call_info.direction
@@ -569,9 +740,15 @@ function WebRTCConn(options) {
 	this.shutdown = () => {
 		if (dead) return
 		dead = true
+		let callids = new Set(Object.keys(sessionsByCall))
 		env.clearInterval(_livenessInterval)
 		env.clearInterval(_endcalInterval)
-		Object.keys(sessionsByConn).map((connId) => cleanupConnection(connId))
+		for (let op of operations) {
+			callids.add(op.callid)
+			op.cancel('shutdown')
+		}
+		Object.keys(sessionsByConn).map((connId) => cleanupConnection(connId, 'shutdown'))
+		for (let callid of callids) expireCall({call_id: callid, hangup_code: 'shutdown'})
 	}
 
 	this.matchCall = (callid) => {
@@ -767,6 +944,13 @@ function WebRTCConn(options) {
 						peer = session && session.peer
 						if (!peer || isCallEndedLocally(session && session.callid)) return
 						return peer.setLocalDescription(answer).then(() => {
+							if (
+								dead ||
+								getSessionByConn(connId) !== session ||
+								session.peer !== peer ||
+								isCallEndedLocally(session.callid)
+							)
+								return
 							// call_id: server dùng để log theo cuộc gọi
 							let path = `finish?x-access-token=${access_token}&connection_id=${connId}&call_id=${session.callid}&version=2&negotiation_id=${negid}&account_id=${accid}`
 							postPerCall(session.callid, path, jsonify(answer), function (body, code) {
@@ -824,16 +1008,14 @@ function WebRTCConn(options) {
 		}
 	})
 
-	this.makeCall = (number, fromnumber, streamPm, callid, campaignid, outboundcallentryid, channel) => {
+	this.makeCall = async (number, fromnumber, streamPm, callid, campaignid, outboundcallentryid, channel) => {
 		if (!callid) callid = 'webcall-' + randomString(30)
-		if (isCallEndedLocally(callid)) {
-			if (streamPm && streamPm.then) {
-				streamPm.then((stream) => stopStream(stream, callid)).catch(() => {})
-			}
-			return new env.Promise((rs) => rs(getLocalEndedCall(callid)))
+		if (dead || isCallEndedLocally(callid)) {
+			if (streamPm && streamPm.then) env.Promise.resolve(streamPm).then(stopStream, reportCallbackError)
+			return dead ? {error: 'shutdown'} : getLocalEndedCall(callid)
 		}
-		// thiếu stream promise thì trả lỗi có cấu trúc thay vì throw giữa executor
-		if (!streamPm || !streamPm.then) return env.Promise.resolve({error: 'no_stream'})
+		if (!streamPm || !streamPm.then) return {error: 'no_stream'}
+		let op = startOperation(callid)
 		let now = env.Date.now()
 		rememberCall(callid)
 		let call = {
@@ -849,235 +1031,120 @@ function WebRTCConn(options) {
 			mic: 'waiting',
 		}
 		dialingRequest[callid] = call
-		publish({created: now, type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
-		return new env.Promise((rs) => {
-			streamPm
-				.then((stream) => {
-					call.mic = 'ready'
-					if (isCallEndedLocally(callid)) {
-						delete dialingRequest[callid]
-						stopStream(stream, callid)
-						return rs(getLocalEndedCall(callid))
+		publish({created: now, type: 'call_ringing', data: {call_info: {call_id: callid}}})
+		try {
+			let stream = await acquireStream(op, streamPm)
+			op.check()
+			call.mic = 'ready'
+			publish({created: now, type: 'call_ringing', data: {call_info: {call_id: callid}}})
+			let session = await connectOperation(op, stream, true)
+			op.check()
+			let path = `call?x-access-token=${access_token}&connection_id=${session.connId}&call_id=${callid}&number=${encodeURIComponent(number)}&from_number=${encodeURIComponent(fromnumber || '')}&account_id=${accid}`
+			if (channel) path += `&channel=${encodeURIComponent(channel)}`
+			if (outboundcallentryid) path += `&outbound_call_entry_id=${encodeURIComponent(outboundcallentryid)}`
+			if (campaignid) path += `&campaign_id=${encodeURIComponent(campaignid)}`
+			let out = await postForOperation(op, path)
+			op.check()
+			if (out.code !== 200) throw operationError(out.body || 'call_failed')
+			let body = parseJSON(out.body)
+			pinSessionApiBase(session.connId, body)
+			if (body && body.call_id) {
+				serverCalls[callid] = body
+				delete dialingRequest[callid]
+			}
+			op.clearDeadline() // The call can now last indefinitely, until an end event.
+			if (body && body.status === 'ended') {
+				publish({created: env.Date.now(), type: 'call_ended', data: {call_info: body}})
+				return this.matchCall(callid)
+			}
+			await op.wait(new env.Promise(() => {})) // publish(call_ended) settles this wait
+		} catch (err) {
+			let reason = failOperation(op, err)
+			return reason === 'call_ended' ? getLocalEndedCall(callid) : {error: reason}
+		} finally {
+			op.dispose()
+		}
+	}
+
+	let signalHangup = (callid, base) => {
+		let path = `hangup?x-access-token=${access_token}&call_id=${callid}&account_id=${accid}`
+		try {
+			callAPI('post', base + path, undefined, (body, code) => {
+				if (!dead && (!code || code < 0) && base !== apiUrl) {
+					try {
+						callAPI('post', apiUrl + path, undefined, () => {})
+					} catch (err) {
+						reportCallbackError(err)
 					}
-					publish({created: now, type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
-					this.joinCall(callid, stream, (err, connId) => {
-						if (isCallEndedLocally(callid)) {
-							delete dialingRequest[callid]
-							cleanupCallConnection(callid, connId)
-							return rs(getLocalEndedCall(callid))
-						}
-						if (err) {
-							delete dialingRequest[callid]
-							endRequest[callid] = env.Date.now()
-							publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
-							return rs({error: err})
-						}
-
-						// encodeURIComponent bắt buộc: số dạng "+84..." không encode thì dấu +
-						// bị server decode thành khoảng trắng
-						let path = `call?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&number=${encodeURIComponent(
-							number,
-						)}&from_number=${encodeURIComponent(fromnumber || '')}&account_id=${accid}`
-						if (channel) path += `&channel=${encodeURIComponent(channel)}`
-						if (outboundcallentryid) path += `&outbound_call_entry_id=${encodeURIComponent(outboundcallentryid)}`
-						if (campaignid) path += `&campaign_id=${encodeURIComponent(campaignid)}`
-						if (isCallEndedLocally(callid)) {
-							delete dialingRequest[callid]
-							cleanupCallConnection(callid, connId)
-							return rs(getLocalEndedCall(callid))
-						}
-
-						postPerCall(callid, path, undefined, (body, code) => {
-							if (isCallEndedLocally(callid)) {
-								delete dialingRequest[callid]
-								cleanupCallConnection(callid, connId)
-								return rs(getLocalEndedCall(callid))
-							}
-							if (code != 200) {
-								logError(accid, agid, body, 'makeCall:365')
-								delete dialingRequest[callid]
-								endRequest[callid] = env.Date.now()
-								publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
-								return rs({error: body})
-							}
-							body = parseJSON(body)
-							pinSessionApiBase(connId, body) // node neo PC xác nhận lại host trong response /call
-							// backend có thể chỉ trả {"ok":true} chứ không kèm call info. Trong trường hợp đó phải
-							// giữ nguyên dialing request, nếu không cuộc gọi sẽ biến mất khỏi store cho tới khi kết thúc
-							if (body && body.call_id) {
-								serverCalls[callid] = body
-								delete dialingRequest[callid]
-							}
-
-							let call = this.matchCall(callid)
-							if (call && call.status == 'ended') return rs(call)
-							if (!endcallCb[callid]) endcallCb[callid] = []
-							endcallCb[callid].push(() => rs(this.matchCall(callid)))
-						})
-					})
-				})
-				.catch((err) => rs({error: err}))
-		})
+				}
+			})
+		} catch (err) {
+			reportCallbackError(err)
+		}
 	}
 
 	this.hangupCall = (callid) => {
-		if (!callid) return
-		if (isCallEndedLocally(callid)) return
+		if (dead || !callid || isCallEndedLocally(callid)) return
 		endRequest[callid] = env.Date.now()
-
-		let call = serverCalls[callid]
-		if (!call) {
-			call = {call_id: callid}
-			serverCalls[callid] = call
-		}
+		let call = serverCalls[callid] || {call_id: callid}
+		serverCalls[callid] = call
 		call.status = 'ended'
 		call.hangup_code = 'cancel'
 		call.ended = env.Date.now()
-		markSessionEnded(callid)
-		// chốt host pin TRƯỚC publish: publish(call_ended) sẽ dọn session (mất pin)
 		let hangupBase = apiBaseFor(callid)
-		publish({
-			created: env.Date.now(),
-			type: 'call_ended',
-			data: {call_info: Object.assign({}, call, {call_id: callid, status: 'ended'})},
-		})
-		let path = `hangup?x-access-token=${access_token}&call_id=${callid}&account_id=${accid}`
-		callAPI('post', hangupBase + path, undefined, (body, code) => {
-			// lỗi mạng tới host pin -> thử lại qua gateway (gateway locate theo call_id)
-			if ((!code || code < 0) && hangupBase != apiUrl) callAPI('post', apiUrl + path, undefined, function () {})
-		})
+		publish({created: env.Date.now(), type: 'call_ended', data: {call_info: Object.assign({}, call)}})
+		signalHangup(callid, hangupBase)
 	}
 
-	this.listenCall = (callid, cb) => {
-		let start = env.Date.now()
-		initSession(callid, (err, connId) => {
-			if (err) {
-				cleanupConnection(connId)
-				return cb(err)
-			}
-			if (isCallEndedLocally(callid)) {
-				cleanupCallConnection(callid, connId)
-				return cb('call_ended')
-			}
-			// /listen luôn đi qua gateway mặc định (chưa biết node neo); response
-			// mang api_url của node neo PC -> pin cho các request per-call sau
-			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&account_id=${accid}`
-			callAPI('post', url, undefined, (body, code) => {
-				if (code != 200) logError(accid, agid, body, 'listenCall:399')
-				if (code == 200) pinSessionApiBase(connId, body)
-				collect('listen_call', callid, env.Date.now() - start)
-				if (isCallEndedLocally(callid)) {
-					cleanupCallConnection(callid, connId)
-					return cb('call_ended')
-				}
-				return code != 200 ? cb(body) : cb()
-			})
-		})
+	let join = async (callid, stream, cb, talk) => {
+		if (dead || isCallEndedLocally(callid)) {
+			stopStream(stream)
+			protect(cb)(dead ? 'shutdown' : 'call_ended')
+			return
+		}
+		let op = startOperation(callid)
+		op.stream = stream
+		try {
+			let session = await connectOperation(op, stream, talk)
+			op.check()
+			op.dispose()
+			protect(cb)(undefined, session.connId)
+		} catch (err) {
+			let reason = failOperation(op, err)
+			protect(cb)(reason, op.connId)
+		} finally {
+			op.dispose()
+		}
 	}
 
-	this.joinCall = (callid, stream, cb) => {
-		let start = env.Date.now()
-		initSession(callid, (err, connId) => {
-			if (err) {
-				stopStream(stream, connId)
-				cleanupConnection(connId)
-				return cb(err, connId)
-			}
-			let session = getSessionByConn(connId)
-			if (session) {
-				session.localStream = stream
-				session.status = 'joining'
-				applySessionMuted(session)
-			}
-			if (isCallEndedLocally(callid)) {
-				cleanupCallConnection(callid, connId)
-				return cb('call_ended', connId)
-			}
-			// /listen luôn đi qua gateway mặc định (chưa biết node neo); response
-			// mang api_url của node neo PC -> pin cho các request per-call sau
-			let url = `${apiUrl}listen?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&talk=true&account_id=${accid}`
-			callAPI('post', url, undefined, (body, code) => {
-				if (code != 200) logError(accid, agid, body, 'joinCall:413')
-				if (code == 200) pinSessionApiBase(connId, body)
-				collect('join_call', callid, env.Date.now() - start)
-				if (isCallEndedLocally(callid)) {
-					cleanupCallConnection(callid, connId)
-					return cb('call_ended', connId)
-				}
-				if (code != 200) {
-					return cb(body, connId)
-				}
-				let session = getSessionByConn(connId)
-				checkIceConnected(
-					session && session.peer,
-					(err) => {
-						if (err) {
-							cleanupCallConnection(callid, connId)
-							return cb(err, connId)
-						}
-						if (isCallEndedLocally(callid)) {
-							cleanupCallConnection(callid, connId)
-							return cb('call_ended', connId)
-						}
-						let session = getSessionByConn(connId)
-						if (session) session.status = 'connected'
-						cb(undefined, connId)
-					},
-					() => isCallEndedLocally(callid) || !getSessionByConn(connId),
-				)
-			})
-		})
-	}
+	this.listenCall = (callid, cb) => join(callid, undefined, cb, false)
+	this.joinCall = (callid, stream, cb) => join(callid, stream, cb, true)
 
-	this.answerCall = (callid, stream) => {
-		let call = serverCalls[callid]
-		if (call && call.status == 'ended') return env.Promise.resolve({error: 'call_ended'})
-		let now = env.Date.now()
-		// call có thể chưa có trong serverCalls -> trả object tối thiểu thay vì body: undefined
-		if (answerRequest[callid]) return env.Promise.resolve({body: call || this.matchCall(callid) || {call_id: callid}})
-		answerRequest[callid] = now
-		publish({created: env.Date.now(), type: 'call_ringing', data: {call_info: {call_id: callid}}}) // fake dialing
-		return new env.Promise((rs) => {
-			if (isCallEndedLocally(callid)) {
-				stopStream(stream, callid)
-				return rs({body: getLocalEndedCall(callid)})
-			}
-			this.joinCall(callid, stream, (err, connId) => {
-				if (isCallEndedLocally(callid)) {
-					delete answerRequest[callid]
-					cleanupCallConnection(callid, connId)
-					return rs({body: getLocalEndedCall(callid)})
-				}
-				if (err) {
-					delete answerRequest[callid]
-					endRequest[callid] = now
-					publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
-					return rs({error: err})
-				}
-				let path = `answer?x-access-token=${access_token}&connection_id=${connId}&call_id=${callid}&account_id=${accid}`
-				if (isCallEndedLocally(callid)) {
-					delete answerRequest[callid]
-					cleanupCallConnection(callid, connId)
-					return rs({body: getLocalEndedCall(callid)})
-				}
-				postPerCall(callid, path, undefined, (body, code) => {
-					if (isCallEndedLocally(callid)) {
-						delete answerRequest[callid]
-						cleanupCallConnection(callid, connId)
-						return rs({body: getLocalEndedCall(callid)})
-					}
-					body = parseJSON(body)
-					if (code != 200) {
-						logError(accid, agid, body, 'answerCall:442')
-						delete answerRequest[callid]
-						endRequest[callid] = now
-						publish({created: env.Date.now(), type: 'call_ended', data: {call_info: {call_id: callid}}})
-						return rs({error: body})
-					}
-					return rs({body})
-				})
-			})
-		})
+	this.answerCall = async (callid, stream) => {
+		if (dead || isCallEndedLocally(callid)) {
+			env.Promise.resolve(stream).then(stopStream, reportCallbackError)
+			return {error: dead ? 'shutdown' : 'call_ended'}
+		}
+		if (answerRequest[callid]) return {body: this.matchCall(callid) || {call_id: callid}}
+		let op = startOperation(callid)
+		answerRequest[callid] = env.Date.now()
+		publish({created: env.Date.now(), type: 'call_ringing', data: {call_info: {call_id: callid}}})
+		try {
+			stream = await acquireStream(op, stream)
+			let session = await connectOperation(op, stream, true)
+			op.check()
+			let path = `answer?x-access-token=${access_token}&connection_id=${session.connId}&call_id=${callid}&account_id=${accid}`
+			let out = await postForOperation(op, path)
+			op.check()
+			if (out.code !== 200) throw operationError(out.body || 'answer_failed')
+			return {body: parseJSON(out.body)}
+		} catch (err) {
+			delete answerRequest[callid]
+			let reason = failOperation(op, err)
+			return reason === 'call_ended' ? {body: getLocalEndedCall(callid)} : {error: reason}
+		} finally {
+			op.dispose()
+		}
 	}
 
 	this.sendDtmf = (key, callid) =>
@@ -1113,6 +1180,7 @@ function WebRTCConn(options) {
 		})
 
 	this.setCallMuted = (callid, muted) => {
+		if (dead) return {error: 'shutdown'}
 		let session = ensureSession(callid)
 		if (!session) return {error: 'call_not_found'}
 		session.muted = !!muted
