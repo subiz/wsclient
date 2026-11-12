@@ -90,8 +90,10 @@ Only `apiUrls` and the credentials needed by your server are required.
 There is no topic unsubscribe API. An explicit `reconnect()` replaces the
 connection without emitting `onInterrupted` for the old connection.
 
-Subscriptions are queued internally and sent one batch at a time. Small batches
-wait up to 100 ms from their first queued topic; a queue exceeding 50 topics can
+Subscriptions are queued internally and sent one batch at a time. Duplicate
+subscribers share the pending result, so every caller waits for
+server confirmation and receives failures if the connection stops or is replaced.
+Small batches wait up to 100 ms from their first queued topic; a queue exceeding 50 topics can
 flush earlier. A pending request can delay later batches. Stopping or replacing
 the connection also settles subscriptions still waiting in the queue.
 
@@ -353,7 +355,7 @@ not trigger that fallback. Callback failures are logged and isolated.
 | Method | Contract |
 | --- | --- |
 | `makeCall(number, fromnumber, streamPm, callid, campaignid, outboundcallentryid, channel)` | Requires a Promise for a live audio stream. Optional call ID is generated if absent; the final three arguments add call metadata. Resolves on call end or setup failure. No number fallback is performed here. |
-| `answerCall(callid, stream)` | Accepts a stream or Promise. Resolves after answer setup to `{body}` or `{error}`. |
+| `answerCall(callid, stream)` | Accepts a stream or Promise. Resolves after answer setup to `{body}` or `{error}`. If the call ends during setup, resolves to `{error: 'call_ended'}`. |
 | `listenCall(callid, callback)` | Receive-only setup. Calls `callback(error, connectionId)` once ICE connects or setup fails. |
 | `joinCall(callid, stream, callback)` | Bidirectional setup with an already acquired stream. Same callback contract as `listenCall`. |
 | `hangupCall(callid)` | Ends locally and signals server hangup. Returns `undefined`. |

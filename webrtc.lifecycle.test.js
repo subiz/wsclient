@@ -431,6 +431,29 @@ test('answer request has a deadline and cannot restore a canceled call', async (
 	h.rtc.shutdown()
 })
 
+for (const cause of ['local', 'remote']) {
+	test('ending a pending answer returns call_ended: ' + cause, async () => {
+		const h = environment({connected: true})
+		const source = h.stream()
+		const result = h.rtc.answerCall('answer', source)
+		await h.flush()
+		h.take('listen').cb('{}', 200)
+		await h.flush()
+		const answer = h.take('answer')
+		if (cause === 'local') h.rtc.hangupCall('answer')
+		else ended(h, answer)
+		assert.equal((await result).error, 'call_ended')
+		assert.equal(answer.aborted, true)
+		assert.equal(source.getTracks()[0].readyState, 'ended')
+		assert.equal(h.peers[0].connectionState, 'closed')
+		answer.cb('{}', 200)
+		await h.flush()
+		assert.equal(h.rtc.matchCall('answer').status, 'ended')
+		h.rtc.shutdown()
+		assert.equal(h.timerCount(), 0)
+	})
+}
+
 test('throwing call-ended callback cannot suppress server hangup', async () => {
 	const h = environment({throwEnded: true})
 	h.rtc.joinCall('hangup', h.stream(), () => {})
@@ -701,7 +724,7 @@ test('default WebPhone hangup works while incoming microphone permission is pend
 		})
 	const result = phone.answerWebCall('incoming')
 	phone.hangupCall()
-	assert.equal((await result).hangup_code, 'cancel')
+	assert.equal((await result).error, 'call_ended')
 	assert.equal(new URL(h.take('hangup').url).searchParams.get('call_id'), 'incoming')
 	const source = h.stream()
 	resolveMic(source)

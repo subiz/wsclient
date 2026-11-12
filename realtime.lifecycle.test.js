@@ -134,6 +134,72 @@ test('subscriptions share a 100ms batching window without duplicate topics', asy
 	assert.equal(h.timerCount(), 0)
 })
 
+test('a topic named dead succeeds for shared, cached and reconnected subscriptions', async () => {
+	var h = environment()
+	var rt = h.create()
+	try {
+		var first = rt.subscribe('dead')
+		var second = rt.subscribe(['dead', 'dead'])
+		await h.tick(100)
+		var sub = h.take('subs')
+		assert.deepEqual(JSON.parse(sub.body).events, ['dead'])
+		sub.cb(JSON.stringify({initial_token: 'initial'}), 200)
+		for (var result of await Promise.all([first, second])) assert.equal(result.error, undefined)
+		assert.equal(rt.getStatus(), 'active')
+		assert.equal((await rt.subscribe('dead')).error, undefined)
+		assert.equal(h.calls.filter((call) => call.url.includes('/subs?')).length, 1)
+		var replacement = rt.reconnect()
+		await h.tick(100)
+		var resub = h.take('subs')
+		assert.deepEqual(JSON.parse(resub.body).events, ['dead'])
+		resub.cb(JSON.stringify({initial_token: 'replacement'}), 200)
+		assert.equal((await replacement).error, undefined)
+	} finally {
+		rt.stop()
+	}
+	assert.equal(h.timerCount(), 0)
+})
+
+for (const outcome of ['success', 'http', 'stop', 'timeout', 'reconnect']) {
+	test('duplicate subscriptions wait for the shared request: ' + outcome, async () => {
+		var h = environment()
+		var rt = h.create(undefined, true)
+		var first = rt.subscribe('shared')
+		var settled = false
+		var second = rt.subscribe(['shared', 'shared']).then((result) => {
+			settled = true
+			return result
+		})
+		await h.tick(99)
+		assert.equal(settled, false)
+		assert.equal(h.calls.length, 0)
+		await h.tick(1)
+		var sub = h.take('subs')
+		assert.deepEqual(JSON.parse(sub.body).events, ['shared'])
+		assert.equal(settled, false)
+		var replacement
+		if (outcome === 'success') sub.cb(JSON.stringify({initial_token: 'initial'}), 200)
+		else if (outcome === 'http') sub.cb('forbidden', 403)
+		else if (outcome === 'stop') rt.stop()
+		else if (outcome === 'timeout') await h.tick(60000)
+		else replacement = rt.reconnect()
+		for (var result of await Promise.all([first, second])) {
+			assert.equal(result.error, outcome === 'success' ? undefined : 'dead')
+		}
+		if (replacement) {
+			await h.tick(100)
+			h.take('subs').cb(JSON.stringify({initial_token: 'replacement'}), 200)
+			assert.equal((await replacement).error, undefined)
+		}
+		if (outcome === 'success') {
+			assert.equal((await rt.subscribe('shared')).error, undefined)
+			assert.equal(h.calls.filter((call) => call.url.includes('/subs?')).length, 1)
+		}
+		rt.stop()
+		assert.equal(h.timerCount(), 0)
+	})
+}
+
 test('large subscription queues send at most 50 topics serially using the latest token and host', async () => {
 	var h = environment()
 	var rt = h.create()
@@ -202,7 +268,7 @@ test('reconnect cancels the old queue and resubscribes every remembered topic', 
 	var old = h.take('subs')
 	var ready = rt.reconnect()
 	assert.equal(old.aborts, 1)
-	await pending
+	assert.equal((await pending).error, 'dead')
 	await h.tick(0)
 	var first = h.take('subs')
 	assert.deepEqual(JSON.parse(first.body).events, topics.slice(0, 50))

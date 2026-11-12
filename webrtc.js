@@ -1138,7 +1138,7 @@ function WebRTCConn(options) {
 		} catch (err) {
 			delete answerRequest[callid]
 			let reason = failOperation(op, err)
-			return reason === 'call_ended' ? {body: getLocalEndedCall(callid)} : {error: reason}
+			return {error: reason}
 		} finally {
 			op.dispose()
 		}

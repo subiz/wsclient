@@ -309,7 +309,7 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 	}
 
 	// holds all topics that realtime must subscribed
-	var topics = {}
+	var topics = Object.create(null)
 
 	// stop the connection
 	this.stop = function () {
@@ -344,18 +344,18 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 		if (typeof events === 'string') events = [events]
 		if (!Array.isArray(events)) return Promise.resolve({error: 'param should be an array or string'})
 
-		// ignore already subscribed events
+		// Share pending subscriptions so duplicate callers also wait for the server.
+		var subscribingConn = conn
 		var all = []
 		for (var i = 0; i < events.length; i++) {
 			var topic = events[i]
 			if (!topic) continue
-			if (topics[topic]) continue
-			topics[topic] = true // mark so next time we wont subscribe this event (topic) again
-			all.push(conn.subscribe(topic))
+			if (!topics[topic]) topics[topic] = subscribingConn.subscribe(topic)
+			all.push(topics[topic])
 		}
 		if (all.length === 0) return Promise.resolve({})
 		return Promise.all(all).then(function () {
-			if (!conn || conn.getStatus() == 'dead') return {error: 'dead'}
+			if (conn !== subscribingConn || subscribingConn.getStatus() == 'dead') return {error: 'dead'}
 			return {}
 		})
 	}
@@ -397,7 +397,7 @@ function Realtime(apiUrls, credential, callAPI, accid, skipautoreconnect) {
 		)
 		conn = myconn
 		var copyTopics = Object.keys(topics)
-		topics = {}
+		topics = Object.create(null)
 		// resubscribe all subscribed events
 		return subscribe(copyTopics)
 	}
